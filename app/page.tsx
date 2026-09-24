@@ -12,6 +12,7 @@ import { QuickDropdown } from "./components/QuickDropdown";
 import { PlanItemCard } from "./components/PlanItemCard";
 import { SectionHeading } from "./components/SectionHeading";
 import { LiveMap } from "./components/LiveMap";
+import { LoadingBar } from "./components/LoadingBar";
 import { getBooking, saveBooking, newBookingId } from "./lib/bookingsStore";
 import type { SavedItem } from "./lib/bookingsStore";
 import type { PlanLocation } from "./lib/geo";
@@ -91,6 +92,11 @@ export default function Home() {
   // no static plan to show meanwhile: null (nothing to say), "loading", or
   // a message when it came back empty.
   const [liveStatus, setLiveStatus] = useState<"loading" | string | null>(null);
+  // Whether a live search is in flight (anywhere, including near Galway
+  // where the built-in venues show meanwhile), and a counter so each new
+  // search restarts the loading bar from zero.
+  const [liveLoading, setLiveLoading] = useState(false);
+  const [searchCount, setSearchCount] = useState(0);
 
   // Every option seen this session, by id — so a pick keeps resolving even
   // after the live catalog it came from is replaced (e.g. a swapped live
@@ -169,7 +175,7 @@ export default function Home() {
   // changes (Budget is applied client-side to whatever comes back). Near
   // Galway the static catalog stays on screen until then, and remains the
   // fallback if the call fails or returns nothing. The server caches
-  // identical requests for 30 minutes, and live results need sign-in.
+  // identical requests for 30 minutes.
   const budgetRef = useRef(budget);
   budgetRef.current = budget;
   useEffect(() => {
@@ -179,6 +185,8 @@ export default function Home() {
     const controller = new AbortController();
     const useStatic = isNearGalway(location);
     setLiveStatus(useStatic ? null : "loading");
+    setLiveLoading(true);
+    setSearchCount((n) => n + 1);
     fetch("/api/plan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -192,6 +200,7 @@ export default function Home() {
         if (live) {
           Object.values(live).forEach((opts) => opts?.forEach((o) => knownOptionsRef.current.set(o.id, o)));
         }
+        setLiveLoading(false);
         setLiveOptions(live);
         setLiveStatus(useStatic || live ? null : data.warnings?.[0] || `Couldn't find live places near ${location.name} right now.`);
         if (!manualPicksRef.current) {
@@ -201,6 +210,7 @@ export default function Home() {
       .catch((err) => {
         if (controller.signal.aborted) return;
         console.warn("[Landed] live search unavailable.", err);
+        setLiveLoading(false);
         setLiveOptions(null);
         setLiveStatus(useStatic ? null : `Couldn't find live places near ${location.name} right now.`);
         // Keep the cards consistent with the swap sheet, which is now
@@ -454,6 +464,7 @@ export default function Home() {
       setLocationChosen(false);
       setLiveOptions(null);
       setLiveStatus(null);
+      setLiveLoading(false);
       setMode("search");
       setPicks(computePicks("nightout", "low", mergeCatalog(null)));
       setMapResetSignal((n) => n + 1);
@@ -543,7 +554,9 @@ export default function Home() {
       </div>
 
       {locationChosen && mode === "search" && (
-      <div ref={planRef} className="flex flex-col" style={{ paddingTop: "calc(5vh + 60px)" }}>
+      // minHeight: a full screen, so even with few or no results the
+      // section's top can scroll (and snap) to the top of the screen.
+      <div ref={planRef} className="flex flex-col" style={{ paddingTop: "calc(5vh + 60px)", minHeight: "100dvh" }}>
         <div className="flex items-center gap-2.5" style={{ marginBottom: 20 }}>
           <span className="font-semibold text-[18px] text-ink leading-none">Your Plan ↘</span>
         </div>
@@ -604,12 +617,18 @@ export default function Home() {
         {/* Example items — swap this for real, AI-sourced +
             Places-verified results from app/api/plan/route.ts */}
         <div className="flex flex-col gap-3.5">
-          {/* Away from Galway there's no static plan to show while live
-              results load (or if they can't) — say what's happening. */}
-          {liveStatus && (
-            <span className="text-[13px] leading-snug" style={{ color: "#767676" }}>
-              {liveStatus === "loading" ? `Finding places near ${location.name}…` : liveStatus}
-            </span>
+          {/* While live results are being found: an animated bar (near
+              Galway the built-in venues show underneath meanwhile). After:
+              away from Galway, say why if nothing came back. */}
+          {liveLoading ? (
+            <LoadingBar key={searchCount} label={`Finding live places near ${location.name}…`} />
+          ) : (
+            liveStatus &&
+            liveStatus !== "loading" && (
+              <span className="text-[13px] leading-snug" style={{ color: "#767676" }}>
+                {liveStatus}
+              </span>
+            )
           )}
           {visibleCategories
             .map((cat) => {
@@ -673,7 +692,7 @@ export default function Home() {
       )}
 
       {locationChosen && mode === "explore" && (
-        <div ref={planRef} className="flex flex-col gap-3.5" style={{ paddingTop: "calc(5vh + 60px)" }}>
+        <div ref={planRef} className="flex flex-col gap-3.5" style={{ paddingTop: "calc(5vh + 60px)", minHeight: "100dvh" }}>
           <span className="font-semibold text-[18px] text-ink leading-none" style={{ marginBottom: 6, display: "block" }}>Explore plans↘</span>
           {/* See the matching comment on Your Plan's summary (the
               planSummary span above, in the search-mode block) — this

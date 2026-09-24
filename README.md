@@ -15,8 +15,8 @@ drink, see something live, and park — around a place and a vibe.
   `http://192.168…` from a phone, it falls back to searching.
 - **Live venue search** (`app/api/plan/route.ts`): Claude (with web
   search) finds current candidates, Google Places verifies each one is
-  real and open, and the results replace the built-in catalog. Requires
-  sign-in; rate-limited per user.
+  real and open, and the results replace the built-in catalog. Open to
+  everyone; rate-limited per user (signed in) or per IP address (guests).
 - **Built-in Galway catalog** (`app/lib/categoryOptions.ts`): the pilot
   region's static venues. Used as the fallback near Galway while live
   results load, for signed-out visitors, or if the live search fails.
@@ -103,8 +103,8 @@ built-in catalog (the reason is logged, and shown in the browser console).
 Measured on 2026-09-24 (Galway and London, uncached):
 
 - **~47–55 s** per search, so results appear well after the page loads.
-  Near Galway the built-in catalog shows meanwhile; elsewhere the plan
-  says "Finding places near …".
+  An animated loading bar shows meanwhile; near Galway the built-in
+  catalog shows underneath it.
 - **Claude**: ~22k input + ~2k output tokens and up to 5 web searches —
   roughly **$0.20** per search at list prices.
 - **Google Places**: ~30 Text Search calls per search, with Enterprise-tier
@@ -114,11 +114,21 @@ Measured on 2026-09-24 (Galway and London, uncached):
 
 Protections in `app/api/plan/route.ts`:
 
-- Live results need a signed-in user.
-- Each user gets **10 uncached searches per hour and 30 per day**
+- Signed-in users get **10 uncached searches per hour and 30 per day**
   (`LIMIT_PER_HOUR` / `LIMIT_PER_DAY`), counted in the `plan_searches`
-  table so the limit holds across server instances. Over the limit, they
-  get the fallback catalog and a message.
+  table so the limit holds across server instances.
+- Guests get **5 per hour and 15 per day per IP address**
+  (`GUEST_LIMIT_PER_HOUR` / `GUEST_LIMIT_PER_DAY`), counted in memory —
+  per server instance, and reset when Vercel starts a new one, so it's
+  a speed bump rather than a guarantee.
+- Over a limit, people get the fallback catalog and a message.
+
+**Set hard spend caps as the real backstop** (guests can't be limited
+reliably without accounts):
+- Anthropic: console.anthropic.com → Settings → Limits → set a monthly
+  spend limit.
+- Google: Cloud Console → APIs & Services → Places API (New) → Quotas →
+  cap "Text Search requests per day" (≈30 per uncached search).
 - A best-effort per-IP cap (60 requests per 10 minutes, per server
   instance) returns HTTP 429.
 - Identical searches (same ~1 km area, time, and vibe) share a result for

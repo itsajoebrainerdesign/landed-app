@@ -29,16 +29,20 @@ import { getServerSupabase } from "../../lib/supabase/server";
  * client applies Low/Modest/Luxury itself, so changing budget never costs
  * another search.
  *
- * Abuse protection — every uncached search spends real money:
- * - Live results require a signed-in Supabase user (read from the auth
- *   cookies). Signed-out requests get `source: "static"`.
- * - Each user gets LIMIT_PER_HOUR / LIMIT_PER_DAY uncached searches,
+ * Abuse protection — every uncached search spends real money. Anyone can
+ * get live results, signed in or not; cached results never count.
+ * - Signed-in users get LIMIT_PER_HOUR / LIMIT_PER_DAY uncached searches,
  *   counted in the Supabase `plan_searches` table so the limit holds
- *   across serverless instances. Cached results don't count.
+ *   across serverless instances.
+ * - Guests get GUEST_LIMIT_PER_HOUR / GUEST_LIMIT_PER_DAY per IP address,
+ *   counted in memory — so only per server instance, and reset when
+ *   Vercel starts a new one. Weaker than the signed-in limit; the real
+ *   backstop is a spend cap in the Anthropic console and a quota on the
+ *   Places API in Google Cloud (see README).
  * - A best-effort per-IP limit (in memory, per instance) caps request
- *   floods before any auth or upstream work.
+ *   floods before any upstream work.
  *
- * Never throws to the client. Missing keys, signed-out users, used-up
+ * Never throws to the client. Missing keys, used-up
  * quota, or failed upstream calls come back as 200 with
  * `source: "static"` and a `warnings` list, and the frontend keeps using
  * its fallback. A malformed body is a 400; an IP flood is a 429.
@@ -62,6 +66,9 @@ const CACHE_MAX_ENTRIES = 500;
 // Uncached live searches per signed-in user.
 const LIMIT_PER_HOUR = 10;
 const LIMIT_PER_DAY = 30;
+// Uncached live searches per guest IP address (in memory, per instance).
+const GUEST_LIMIT_PER_HOUR = 5;
+const GUEST_LIMIT_PER_DAY = 15;
 // Requests (cached or not) per IP per window, per server instance.
 const IP_LIMIT = 60;
 const IP_WINDOW_MS = 10 * 60 * 1000;
@@ -117,7 +124,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    return NextResponse.json(await handlePlan(parsed));
+    return NextResponse.json(await handlePlan(parsed, clientIp(req)));
   } catch (err) {
     // Last-resort guard — every step below already catches its own errors.
     console.error("[api/plan] unexpected error", err);
@@ -129,19 +136,24 @@ function staticResponse(warnings: string[]): PlanResponse {
   return { options: {}, source: "static", warnings };
 }
 
-async function handlePlan(input: PlanRequest): Promise<PlanResponse> {
-  // Sign-in first: nothing below (cache included) is served to guests, so
-  // live results can't be scraped anonymously.
-  const supabase = await getServerSupabase();
-  if (!supabase) return staticResponse(["Supabase isn't configured, so live search (which requires sign-in) is off."]);
-  const { data: auth } = await supabase.auth.getUser();
-  if (!auth.user) return staticResponse(["Sign in to get live venue results."]);
-
+async function handlePlan(input: PlanRequest, ip: string): Promise<PlanResponse> {
   const key = cacheKey(input);
   const cached = readCache(key);
   if (cached) return cached;
 
-  const quotaError = await consumeQuota(supabase, auth.user.id);
+  // Signed in → the shared per-user quota; otherwise → the per-IP guest
+  // quota. (No Supabase, or its auth check failing, just means "guest".)
+  const supabase = await getServerSupabase();
+  let userId: string | null = null;
+  if (supabase) {
+    try {
+      const { data } = await supabase.auth.getUser();
+      userId = data.user?.id ?? null;
+    } catch {
+      userId = null;
+    }
+  }
+  const quotaError = supabase && userId ? await consumeQuota(supabase, userId) : consumeGuestQuota(ip);
   if (quotaError) return staticResponse([quotaError]);
 
   const value = buildPlan(input);
@@ -164,6 +176,25 @@ function allowIp(ip: string): boolean {
   ipHits.set(ip, recent);
   if (ipHits.size > 10_000) ipHits.clear(); // don't let the map grow without bound
   return recent.length <= IP_LIMIT;
+}
+
+// ── Guest quota (in memory, per instance) ───────────────────────────────
+
+const guestSearches = new Map<string, number[]>();
+
+function consumeGuestQuota(ip: string): string | null {
+  const now = Date.now();
+  const recent = (guestSearches.get(ip) ?? []).filter((t) => now - t < 86400_000);
+  if (recent.filter((t) => now - t < 3600_000).length >= GUEST_LIMIT_PER_HOUR) {
+    return `You've used this hour's ${GUEST_LIMIT_PER_HOUR} live searches — sign in for more, or try again later.`;
+  }
+  if (recent.length >= GUEST_LIMIT_PER_DAY) {
+    return `You've used today's ${GUEST_LIMIT_PER_DAY} live searches — sign in for more, or try again tomorrow.`;
+  }
+  recent.push(now);
+  guestSearches.set(ip, recent);
+  if (guestSearches.size > 10_000) guestSearches.clear(); // don't let the map grow without bound
+  return null;
 }
 
 // ── Per-user quota (Supabase, shared across instances) ──────────────────
