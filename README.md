@@ -154,7 +154,6 @@ results.
 - `app/lib/` — `bookingsStore` / `accountStore` (data, Supabase or this
   device), `categoryOptions` (Galway catalog + pick logic), `geo`
   (locations), `urls` (outbound links), `supabase/` (clients)
-- `middleware.ts` — keeps Supabase sessions fresh
 - `supabase/schema.sql` — database tables and security rules
 
 ## A mobile app later

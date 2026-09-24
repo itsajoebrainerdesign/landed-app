@@ -2,8 +2,10 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
 // Server-side Supabase client for route handlers, reading and writing the
-// auth cookies through next/headers. Returns null if Supabase isn't
-// configured.
+// auth cookies through next/headers. It refreshes an expired session
+// itself (there's no middleware — the browser client keeps sessions
+// fresh for the pages, which are all client components). Returns null if
+// Supabase isn't configured or can't start.
 export async function getServerSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
