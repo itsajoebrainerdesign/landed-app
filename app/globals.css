@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: "Nuckle";
+  src: url("/fonts/nuckle-medium.ttf") format("truetype");
+  font-weight: 500;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Nuckle";
+  src: url("/fonts/nuckle-semibold.ttf") format("truetype");
+  font-weight: 600;
+  font-style: normal;
+}
+
+html,
+body {
+  background: #ffffff;
+  margin: 0;
+}
