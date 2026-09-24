@@ -9,6 +9,15 @@ export async function getServerSupabase() {
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) return null;
   const cookieStore = await cookies(); // async since Next 15
+  try {
+    return makeClient(url, key, cookieStore);
+  } catch (err) {
+    console.error("[supabase] server client couldn't start", err);
+    return null;
+  }
+}
+
+function makeClient(url: string, key: string, cookieStore: Awaited<ReturnType<typeof cookies>>) {
   return createServerClient(url, key, {
     cookies: {
       getAll() {

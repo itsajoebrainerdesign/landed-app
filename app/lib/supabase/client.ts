@@ -17,6 +17,13 @@ export function getSupabase(): SupabaseClient | null {
     client = null;
     return client;
   }
-  client = createBrowserClient(url, key);
+  try {
+    client = createBrowserClient(url, key);
+  } catch (err) {
+    // e.g. a malformed URL in the host's environment variables — run
+    // signed-out rather than crashing every page.
+    console.error("[Landed] Supabase client couldn't start — accounts are disabled.", err);
+    client = null;
+  }
   return client;
 }
