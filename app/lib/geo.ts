@@ -16,8 +16,7 @@ export type PlanLocation = LatLng & {
 export const GALWAY: LatLng = { lat: 53.2707, lng: -9.0568 };
 // The plan's placeholder location before one is chosen. Nothing shows it:
 // the page stays locked at the map until the device location (or a
-// search, or a saved plan) replaces it. Also the location of the Galway
-// example plans in Explore.
+// search, or a saved plan) replaces it.
 export const DEFAULT_LOCATION: PlanLocation = { ...GALWAY, name: "Galway", label: "Galway, Ireland" };
 export const GALWAY_AREA_KM = 25;
 

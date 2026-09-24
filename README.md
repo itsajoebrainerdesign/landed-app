@@ -28,8 +28,8 @@ drink, see something live, and park — around a place and a vibe.
   time they sign in.
 - **Not built yet**: payments (Stripe — the Account page's payment section
   is a placeholder), partner booking APIs (the "Connect" buttons are
-  disabled), and real "Nearby" plans in Explore (they're the examples in
-  `app/lib/communityBookings.ts`).
+  disabled), and plans shared between users (Explore says "No plans in
+  this area" until that exists).
 
 ## Running it locally
 

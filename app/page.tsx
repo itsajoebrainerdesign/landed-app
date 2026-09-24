@@ -5,9 +5,8 @@ import type { TimeKey, VibeKey, BudgetKey } from "./lib/constants";
 import { TIME_OPTIONS, VIBE_OPTIONS, BUDGET_OPTIONS, CTA_GRADIENT } from "./lib/constants";
 import type { CategoryKey, CategoryOption, Catalog } from "./lib/categoryOptions";
 import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_OPTIONS, computePicks, mergeCatalog } from "./lib/categoryOptions";
-import { COMMUNITY_BOOKINGS } from "./lib/communityBookings";
 import { mapsUrl, ticketSearchUrl, bookingSearchUrl } from "./lib/urls";
-import { formatDate, telHref } from "./lib/format";
+import { telHref } from "./lib/format";
 import { PinIcon, PhoneIcon, PhotoIcon } from "./components/icons";
 import { QuickDropdown } from "./components/QuickDropdown";
 import { PlanItemCard } from "./components/PlanItemCard";
@@ -76,7 +75,7 @@ export default function Home() {
   const [location, setLocation] = useState<PlanLocation>(DEFAULT_LOCATION);
   // Nothing below the map (Your Plan, Explore, the booking sheet's list)
   // appears until a location has actually been chosen — searched on the
-  // map, or carried in by a saved or copied plan.
+  // map, from the device location, or carried in by a saved plan.
   const [locationChosen, setLocationChosen] = useState(false);
   // Bumped by + (new enquiry) to clear the map's search box and marker.
   const [mapResetSignal, setMapResetSignal] = useState(0);
@@ -135,7 +134,7 @@ export default function Home() {
   }
 
   // True once picks came from somewhere other than the auto-pick logic (a
-  // swap, a loaded draft, a copied plan) — live results arriving after
+  // swap, or a loaded draft) — live results arriving after
   // that must not overwrite them. Changing Vibe, Budget, or the location
   // re-picks everything anyway, so it resets this.
   const manualPicksRef = useRef(false);
@@ -144,7 +143,7 @@ export default function Home() {
   // category, so Your Plan actually reflects the answer — this replaces any
   // manual swaps with the new best fit. Done here in the handlers rather
   // than in an effect on [vibe, budget], because an effect also fired when
-  // a saved or copied plan set vibe/budget, and overwrote its picks.
+  // a saved plan set vibe/budget, and overwrote its picks.
   function selectVibe(next: VibeKey) {
     setVibe(next);
     manualPicksRef.current = false;
@@ -733,90 +732,11 @@ export default function Home() {
               onChange={(e) => setRadius(Number(e.target.value))}
             />
           </div>
-          {COMMUNITY_BOOKINGS.map((b) => (
-            <div
-              key={b.id}
-              style={{
-                borderRadius: 20,
-                background: "#F7F5EE",
-                padding: 16,
-                display: "flex",
-                flexDirection: "column",
-                gap: 10,
-              }}
-            >
-              <span className="text-[11px]" style={{ color: "#767766" }}>
-                {b.authorName}&rsquo;s plan · {formatDate(b.createdAt)}
-              </span>
-              <div className="flex flex-col" style={{ gap: 2 }}>
-                <span className="font-semibold text-[15px] leading-snug text-ink">Galway, Ireland</span>
-                <span className="text-[12px]" style={{ color: "#767766" }}>
-                  {VIBE_OPTIONS.find((o) => o.key === b.vibe)?.label || b.vibe} ·{" "}
-                  {BUDGET_OPTIONS.find((o) => o.key === b.budget)?.label || b.budget}
-                </span>
-              </div>
-              <div className="flex flex-col" style={{ gap: 8 }}>
-                {Object.values(b.items).map((item) => (
-                  <div key={item.tag} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <div style={{ width: 36, height: 36, borderRadius: 8, background: item.tagBg, flexShrink: 0 }} />
-                    <div className="flex flex-col" style={{ gap: 3, minWidth: 0 }}>
-                      <span
-                        style={{
-                          alignSelf: "flex-start",
-                          borderRadius: 999,
-                          padding: "2px 8px",
-                          fontSize: 9,
-                          fontWeight: 700,
-                          letterSpacing: "0.03em",
-                          background: item.tagBg,
-                          color: "#111111",
-                        }}
-                      >
-                        {item.tag}
-                      </span>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: "#111111" }}>{item.title}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <button
-                onClick={() => {
-                  draftIdRef.current = null;
-                  manualPicksRef.current = true;
-                  setLocationChosen(true);
-                  // The Nearby examples are all Galway plans.
-                  if (location.lat !== DEFAULT_LOCATION.lat || location.lng !== DEFAULT_LOCATION.lng) {
-                    setLocation(DEFAULT_LOCATION);
-                    setLiveOptions(null);
-                  }
-                  setVibe(b.vibe);
-                  setTime(b.time);
-                  setBudget(b.budget);
-                  setPicks(
-                    Object.fromEntries(
-                      Object.entries(b.items).map(([cat, item]) => [cat, item.id])
-                    ) as Record<CategoryKey, string>
-                  );
-                  setRemovedCategories(CATEGORY_ORDER.filter((cat) => !b.items[cat]));
-                  setBookingsConfirmed(false);
-                  setMode("search");
-                }}
-                style={{
-                  alignSelf: "flex-start",
-                  borderRadius: 999,
-                  padding: "8px 16px",
-                  fontSize: 12,
-                  fontWeight: 700,
-                  color: "#111111",
-                  background: CTA_GRADIENT,
-                  border: "none",
-                  cursor: "pointer",
-                }}
-              >
-                Copy this plan
-              </button>
-            </div>
-          ))}
+          {/* Plans other people have made nearby will be listed here once
+              plans are shared between users; until then there are none. */}
+          <span className="text-[13px] leading-snug" style={{ color: "#767676" }}>
+            No plans in this area
+          </span>
         </div>
       )}
 
