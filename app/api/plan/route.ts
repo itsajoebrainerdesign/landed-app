@@ -12,12 +12,16 @@ import { getServerSupabase } from "../../lib/supabase/server";
  * POST /api/plan
  *
  * Body: { location?: string, lat?: number, lng?: number,
- *         time: "now" | "tonight" | "tomorrow",
  *         vibe: "nightout" | "date" | "family" | "solo" }
- * (lat/lng default to Galway city centre.)
+ * (lat/lng default to Galway city centre. A `time` field is accepted but
+ * ignored — one search covers every timeframe.)
+ *
+ * Response: { options: { now, tonight, tomorrow }, source, warnings } —
+ * each timeframe a Partial<Record<CategoryKey, CategoryOption[]>>, so
+ * switching When in the app never needs another search.
  *
  * 1) AI search — Claude with the web_search tool finds live, current
- *    candidates per category for the intake.
+ *    candidates per category, marking which timeframes each suits.
  * 2) Verification — each candidate is looked up in Google Places (New) to
  *    confirm it's real and operating, and to get its canonical address,
  *    phone, rating, and location.
@@ -51,8 +55,10 @@ import { getServerSupabase } from "../../lib/supabase/server";
 // Claude + web search + ~30 Places lookups can take a minute or more.
 export const maxDuration = 300;
 
-type PlanRequest = { location: string; lat: number; lng: number; time: TimeKey; vibe: VibeKey };
-type LiveOptions = Partial<Record<CategoryKey, CategoryOption[]>>;
+type PlanRequest = { location: string; lat: number; lng: number; vibe: VibeKey };
+type CategoryResults = Partial<Record<CategoryKey, CategoryOption[]>>;
+type LiveOptions = Partial<Record<TimeKey, CategoryResults>>;
+const TIME_KEYS = TIME_OPTIONS.map((o) => o.key);
 type PlanResponse = { options: LiveOptions; source: "live" | "static"; warnings: string[] };
 
 const DEFAULT_LOCATION = "Galway, Ireland";
@@ -69,7 +75,8 @@ const MAX_DISTANCE_KM: Record<CategoryKey, number> = {
 };
 
 const MODEL = "claude-opus-5";
-const CANDIDATES_PER_CATEGORY = 5;
+// Up to this many per category across all three timeframes combined.
+const CANDIDATES_PER_CATEGORY = 7;
 const CACHE_TTL_MS = 30 * 60 * 1000;
 const CACHE_MAX_ENTRIES = 500;
 
@@ -103,7 +110,7 @@ const CATEGORY_UNITS: Record<CategoryKey, string> = {
 function parseRequest(body: unknown): PlanRequest | string {
   if (!body || typeof body !== "object" || Array.isArray(body)) return "Body must be a JSON object.";
   const { location, lat, lng, time, vibe } = body as Record<string, unknown>;
-  if (!TIME_OPTIONS.some((o) => o.key === time)) return `"time" must be one of: ${TIME_OPTIONS.map((o) => o.key).join(", ")}.`;
+  if (time !== undefined && !TIME_KEYS.includes(time as TimeKey)) return `"time" must be one of: ${TIME_KEYS.join(", ")}.`;
   if (!VIBE_OPTIONS.some((o) => o.key === vibe)) return `"vibe" must be one of: ${VIBE_OPTIONS.map((o) => o.key).join(", ")}.`;
   if (location !== undefined && (typeof location !== "string" || location.trim().length === 0 || location.length > 100)) {
     return `"location" must be a non-empty string of at most 100 characters.`;
@@ -118,7 +125,6 @@ function parseRequest(body: unknown): PlanRequest | string {
     location: (location as string | undefined)?.trim() || DEFAULT_LOCATION,
     lat: hasCoords ? (lat as number) : GALWAY.lat,
     lng: hasCoords ? (lng as number) : GALWAY.lng,
-    time: time as TimeKey,
     vibe: vibe as VibeKey,
   };
 }
@@ -251,7 +257,7 @@ async function consumeQuota(supabase: SupabaseClient, userId: string): Promise<s
 const cache = new Map<string, { expires: number; value: Promise<PlanResponse> }>();
 
 function cacheKey(input: PlanRequest): string {
-  return `${input.lat.toFixed(2)},${input.lng.toFixed(2)}|${input.time}|${input.vibe}`;
+  return `${input.lat.toFixed(2)},${input.lng.toFixed(2)}|${input.vibe}`;
 }
 
 function readCache(key: string): Promise<PlanResponse> | null {
@@ -287,11 +293,12 @@ async function buildPlan(input: PlanRequest): Promise<PlanResponse> {
 
   const verified = await verifyWithGooglePlaces(candidates, input, placesKey, warnings);
   const options = rankAndAssemble(verified, input);
-  const source = Object.keys(options).length > 0 ? "live" : "static";
+  const count = (t: TimeKey) => Object.values(options[t] ?? {}).reduce((n, o) => n + (o?.length ?? 0), 0);
+  const source = TIME_KEYS.some((t) => count(t) > 0) ? "live" : "static";
   if (source === "static") warnings.push("No AI candidates could be verified in Google Places.");
   console.info(
-    `[api/plan] ${input.location} ${input.time}/${input.vibe}: ${candidates.length} candidates, ${verified.length} verified, ` +
-      `${Object.values(options).reduce((n, o) => n + (o?.length ?? 0), 0)} kept`
+    `[api/plan] ${input.location} ${input.vibe}: ${candidates.length} candidates, ${verified.length} verified, kept ` +
+      TIME_KEYS.map((t) => `${t} ${count(t)}`).join(" / ")
   );
   return { options, source, warnings };
 }
@@ -303,6 +310,7 @@ type Candidate = {
   name: string;
   price_gbp: number;
   vibes: VibeKey[];
+  times: TimeKey[];
   highlight: string;
 };
 
@@ -321,7 +329,7 @@ const SUBMIT_TOOL: Anthropic.Beta.BetaTool = {
         items: {
           type: "object",
           additionalProperties: false,
-          required: ["category", "name", "price_gbp", "vibes", "highlight"],
+          required: ["category", "name", "price_gbp", "vibes", "times", "highlight"],
           properties: {
             category: { type: "string", enum: [...CATEGORY_ORDER] },
             name: {
@@ -337,6 +345,11 @@ const SUBMIT_TOOL: Anthropic.Beta.BetaTool = {
               items: { type: "string", enum: VIBE_OPTIONS.map((o) => o.key) },
               description: "Every vibe this venue genuinely suits.",
             },
+            times: {
+              type: "array",
+              items: { type: "string", enum: TIME_KEYS },
+              description: "Every timeframe this venue is a good, open option for: now, tonight, tomorrow.",
+            },
             highlight: {
               type: "string",
               description: "2-4 word selling point, e.g. 'Trad session 9pm', 'Sea view', 'Tasting menu'. No prices or currency.",
@@ -350,7 +363,12 @@ const SUBMIT_TOOL: Anthropic.Beta.BetaTool = {
 
 const SYSTEM_PROMPT = `You find real, currently operating venues for Landed, an app that builds a night or day out.
 
-For the requested location, timeframe, and vibe, use web search to find up to ${CANDIDATES_PER_CATEGORY} strong candidates in EACH of these categories:
+For the requested location and vibe, use web search to find up to ${CANDIDATES_PER_CATEGORY} strong candidates in EACH of these categories, covering three timeframes at once — the app lets the person switch between them instantly, so this one search has to serve all three:
+- now: open and worth going to at the current local time
+- tonight: this evening, local time
+- tomorrow: tomorrow, day or evening
+
+Categories:
 ${CATEGORY_ORDER.map((c) => `- ${c} (${CATEGORY_LABELS[c]}): price_gbp is ${CATEGORY_UNITS[c]}`).join("\n")}
 
 Guidance:
@@ -359,20 +377,13 @@ Guidance:
   - Only if a category has nothing good that close, widen to 3 km. Never suggest anything further than ${MAX_DISTANCE_KM.restaurant} km for restaurants, bars and parking, ${MAX_DISTANCE_KM.live} km for live and attractions, or ${MAX_DISTANCE_KM.stay} km for stays — anything beyond is discarded.
   - Among good options, closer is better.
 - Include a spread of price points (budget through premium) in every category where the area has them, so the user's budget setting has real choices.
-- "live" means live music, comedy, theatre, or similar. Favour venues with something actually on during the timeframe, and put the act or show in "highlight".
-- Only include places you have good evidence are open for business now. Skip anything permanently closed.
+- "times" lists every timeframe a venue suits. Most places suit several; pick venues so that each timeframe ends up with a few good options per category where the area has them (e.g. a daytime café for now, a late bar for tonight).
+- "live" means live music, comedy, theatre, or similar. Favour venues with something actually on in a timeframe, and only list the timeframes the show is on. Put the act or show in "highlight", with the day if it's only on one ("Tomorrow: jazz trio").
+- Only include places that are currently operating. Skip anything permanently closed.
 - "name" must be the venue's business name exactly as Google Maps would list it, since each one is verified against Google Places.
 - price_gbp is your best current estimate from what you find, in British pounds (convert local prices if needed). The app labels it as an estimate.
 - When you're done, call submit_venues once with everything. Don't write a prose answer.`;
 
-// The venue's local time zone isn't known here, so give the model the
-// exact UTC instant and let it work out local time for the location.
-function describeTimeframe(time: TimeKey): string {
-  const now = new Date().toISOString();
-  if (time === "now") return `right now (current time: ${now} UTC — use the location's local time)`;
-  if (time === "tonight") return `tonight, local time (current time: ${now} UTC)`;
-  return `tomorrow, local time (current time: ${now} UTC)`;
-}
 
 async function findCandidatesWithAI(input: PlanRequest, apiKey: string, warnings: string[]): Promise<Candidate[]> {
   const client = new Anthropic({ apiKey, timeout: 180_000, maxRetries: 1 });
@@ -382,7 +393,10 @@ async function findCandidatesWithAI(input: PlanRequest, apiKey: string, warnings
       role: "user",
       content:
         `Pin on the map: ${input.lat.toFixed(5)}, ${input.lng.toFixed(5)} — in ${input.location}. Find places closest to this exact spot.\n` +
-        `Timeframe: ${describeTimeframe(input.time)}\nVibe: ${vibeLabel} (${input.vibe})`,
+        // The pin's time zone isn't known here, so give the exact UTC
+        // instant and let the model work out local time for the location.
+        `Current time: ${new Date().toISOString()} UTC — use the pin's local time for now / tonight / tomorrow.\n` +
+        `Vibe: ${vibeLabel} (${input.vibe})`,
     },
   ];
 
@@ -468,7 +482,7 @@ function sanitizeCandidates(input: unknown): Candidate[] {
   const out: Candidate[] = [];
   for (const v of venues) {
     if (!v || typeof v !== "object") continue;
-    const { category, name, price_gbp, vibes, highlight } = v as Record<string, unknown>;
+    const { category, name, price_gbp, vibes, times, highlight } = v as Record<string, unknown>;
     if (!CATEGORY_ORDER.includes(category as CategoryKey)) continue;
     if (typeof name !== "string" || !name.trim()) continue;
     out.push({
@@ -476,6 +490,11 @@ function sanitizeCandidates(input: unknown): Candidate[] {
       name: name.trim().slice(0, 120),
       price_gbp: typeof price_gbp === "number" && isFinite(price_gbp) && price_gbp >= 0 ? price_gbp : NaN,
       vibes: Array.isArray(vibes) ? (vibes.filter((x) => vibeKeys.includes(x as string)) as VibeKey[]) : [],
+      // No timeframes given → treat it as suiting all three ("now" is
+      // still checked against Google's live opening hours).
+      times: Array.isArray(times) && times.some((t) => TIME_KEYS.includes(t as TimeKey))
+        ? (times.filter((t) => TIME_KEYS.includes(t as TimeKey)) as TimeKey[])
+        : [...TIME_KEYS],
       highlight: typeof highlight === "string" ? highlight.trim().slice(0, 40) : "",
     });
   }
@@ -625,20 +644,12 @@ function rankAndAssemble(verified: Verified[], input: PlanRequest): LiveOptions 
   const seen = new Set<string>();
   for (const { candidate, place, distanceKm } of verified) {
     const cat = candidate.category;
-    const key = `${cat}|${place.id}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    // "Now" means open now — except a stay or car park, which you can
-    // head to regardless.
-    if (input.time === "now" && place.currentOpeningHours?.openNow === false && cat !== "stay" && cat !== "parking") continue;
-
     const template = CATEGORY_OPTIONS[cat][0];
     const vibes = candidate.vibes.length > 0 ? candidate.vibes : [input.vibe];
     const meta = [`${(distanceKm * 0.621371).toFixed(1)} mi`];
     if (typeof place.rating === "number") meta.push(`★ ${place.rating.toFixed(1)} Reviews`);
     if (candidate.highlight) meta.push(candidate.highlight);
-
-    (options[cat] ??= []).push({
+    const option: CategoryOption = {
       id: `g-${cat}-${place.id}`,
       tag: template.tag,
       tagBg: template.tagBg,
@@ -650,11 +661,21 @@ function rankAndAssemble(verified: Verified[], input: PlanRequest): LiveOptions 
       phone: place.internationalPhoneNumber || "",
       vibes,
       meta,
-    });
+    };
+
+    for (const time of candidate.times) {
+      const key = `${time}|${cat}|${place.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      // "Now" means open now, by Google's live opening hours — except a
+      // stay or car park, which you can head to regardless.
+      if (time === "now" && place.currentOpeningHours?.openNow === false && cat !== "stay" && cat !== "parking") continue;
+      ((options[time] ??= {})[cat] ??= []).push(option);
+    }
   }
   // Closest first, matching how the static catalog reads in the swap sheet.
-  for (const cat of Object.keys(options) as CategoryKey[]) {
-    options[cat]!.sort((a, b) => parseFloat(a.meta[0]) - parseFloat(b.meta[0]));
+  for (const byCat of Object.values(options)) {
+    for (const list of Object.values(byCat ?? {})) list?.sort((a, b) => parseFloat(a.meta[0]) - parseFloat(b.meta[0]));
   }
   return options;
 }

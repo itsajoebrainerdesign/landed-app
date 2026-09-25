@@ -4,6 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { TimeKey, VibeKey, BudgetKey } from "./lib/constants";
 import { TIME_OPTIONS, VIBE_OPTIONS, BUDGET_OPTIONS, CTA_GRADIENT } from "./lib/constants";
 import type { CategoryKey, CategoryOption, Catalog } from "./lib/categoryOptions";
+
+// /api/plan's results: per timeframe, per category.
+type LiveResults = Partial<Record<TimeKey, Partial<Catalog>>>;
 import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_OPTIONS, computePicks, mergeCatalog } from "./lib/categoryOptions";
 import { mapsUrl, ticketSearchUrl, bookingSearchUrl } from "./lib/urls";
 import { telHref } from "./lib/format";
@@ -82,16 +85,19 @@ export default function Home() {
   const [mapResetSignal, setMapResetSignal] = useState(0);
   const staticFallback = isNearGalway(location);
 
-  // Live venues from /api/plan (Claude web search + Google Places), per
-  // category. Near Galway, any category the live search didn't return keeps
-  // the static catalog — see mergeCatalog.
-  const [liveOptions, setLiveOptions] = useState<Partial<Catalog> | null>(null);
-  const catalog = useMemo(() => mergeCatalog(liveOptions, staticFallback), [liveOptions, staticFallback]);
+  // Live venues from /api/plan (Claude web search + Google Places), for all
+  // three timeframes at once — one search covers Now, Tonight and
+  // Tomorrow, so switching When is instant. Near Galway, any category the
+  // live search didn't return keeps the static catalog — see mergeCatalog.
+  const [liveOptions, setLiveOptions] = useState<LiveResults | null>(null);
+  const catalog = useMemo(
+    () => mergeCatalog(liveOptions?.[time] ?? null, staticFallback),
+    [liveOptions, time, staticFallback]
+  );
 
-  // Status of the live search, shown only away from Galway, where there's
-  // no static plan to show meanwhile: null (nothing to say), "loading", or
-  // a message when it came back empty.
-  const [liveStatus, setLiveStatus] = useState<"loading" | string | null>(null);
+  // Why the last live search came back with nothing (away from Galway,
+  // where there's no static plan to fall back on), if it did.
+  const [liveStatus, setLiveStatus] = useState<string | null>(null);
   // Whether a live search is in flight (anywhere, including near Galway
   // where the built-in venues show meanwhile), and a counter so each new
   // search restarts the loading bar from zero.
@@ -117,6 +123,11 @@ export default function Home() {
   // The categories actually showing in Your Plan: not removed, and with a
   // venue to show (away from Galway a category can be empty).
   const visibleCategories = CATEGORY_ORDER.filter((cat) => !removedCategories.includes(cat) && findOption(cat, picks[cat]));
+  // Away from Galway, when this timeframe has nothing to show: say why.
+  const emptyMessage =
+    !staticFallback && !liveLoading && locationChosen && visibleCategories.length === 0
+      ? liveStatus || `Couldn't find live places near ${location.name} ${TIME_PHRASES[time]}.`
+      : null;
 
   // Saved plans store each venue in full, so a live venue from an earlier
   // session reloads exactly rather than falling back to today's best pick.
@@ -160,6 +171,13 @@ export default function Home() {
     manualPicksRef.current = false;
     setPicks(computePicks(vibe, next, catalog));
   }
+  // When switches to that timeframe's results, which are already here
+  // from the same search — no new request.
+  function selectTime(next: TimeKey) {
+    setTime(next);
+    manualPicksRef.current = false;
+    setPicks(computePicks(vibe, budget, mergeCatalog(liveOptions?.[next] ?? null, staticFallback)));
+  }
   // The map's search box moved the plan. The previous live results were
   // for the old place, so drop them; near Galway the static catalog shows
   // meanwhile, elsewhere the plan waits for live results.
@@ -171,40 +189,45 @@ export default function Home() {
     setPicks(computePicks(vibe, budget, mergeCatalog(null, isNearGalway(next))));
   }
 
-  // Ask /api/plan for live venues whenever When, Vibe, or the location
-  // changes (Budget is applied client-side to whatever comes back). Near
-  // Galway the static catalog stays on screen until then, and remains the
-  // fallback if the call fails or returns nothing. The server caches
+  // Ask /api/plan for live venues whenever Vibe or the location changes.
+  // One search returns Now, Tonight and Tomorrow together, and Budget is
+  // applied client-side, so neither When nor Budget triggers a search.
+  // Near Galway the static catalog stays on screen until then, and remains
+  // the fallback if the call fails or returns nothing. The server caches
   // identical requests for 30 minutes.
   const budgetRef = useRef(budget);
   budgetRef.current = budget;
+  const timeRef = useRef(time);
+  timeRef.current = time;
   useEffect(() => {
     // Nothing is shown until a location is chosen, so don't spend a live
     // search (or the user's allowance) on the default before then.
     if (!locationChosen) return;
     const controller = new AbortController();
     const useStatic = isNearGalway(location);
-    setLiveStatus(useStatic ? null : "loading");
+    setLiveStatus(null);
     setLiveLoading(true);
     setSearchCount((n) => n + 1);
     fetch("/api/plan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ location: location.label, lat: location.lat, lng: location.lng, time, vibe }),
+      body: JSON.stringify({ location: location.label, lat: location.lat, lng: location.lng, vibe }),
       signal: controller.signal,
     })
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
-      .then((data: { options?: Partial<Catalog>; source?: string; warnings?: string[] }) => {
+      .then((data: { options?: LiveResults; source?: string; warnings?: string[] }) => {
         if (data.warnings?.length) console.warn("[Landed] live search:", data.warnings.join(" "));
         const live = data.source === "live" && data.options ? data.options : null;
         if (live) {
-          Object.values(live).forEach((opts) => opts?.forEach((o) => knownOptionsRef.current.set(o.id, o)));
+          Object.values(live).forEach((byCat) =>
+            Object.values(byCat ?? {}).forEach((opts) => opts?.forEach((o) => knownOptionsRef.current.set(o.id, o)))
+          );
         }
         setLiveLoading(false);
         setLiveOptions(live);
-        setLiveStatus(useStatic || live ? null : data.warnings?.[0] || `Couldn't find live places near ${location.name} right now.`);
+        setLiveStatus(live ? null : data.warnings?.[0] || null);
         if (!manualPicksRef.current) {
-          setPicks(computePicks(vibe, budgetRef.current, mergeCatalog(live, useStatic)));
+          setPicks(computePicks(vibe, budgetRef.current, mergeCatalog(live?.[timeRef.current] ?? null, useStatic)));
         }
       })
       .catch((err) => {
@@ -212,13 +235,13 @@ export default function Home() {
         console.warn("[Landed] live search unavailable.", err);
         setLiveLoading(false);
         setLiveOptions(null);
-        setLiveStatus(useStatic ? null : `Couldn't find live places near ${location.name} right now.`);
+        setLiveStatus(null);
         // Keep the cards consistent with the swap sheet, which is now
         // back on the fallback catalog — unless the user chose these picks.
         if (!manualPicksRef.current) setPicks(computePicks(vibe, budgetRef.current, mergeCatalog(null, useStatic)));
       });
     return () => controller.abort();
-  }, [time, vibe, location, locationChosen]);
+  }, [vibe, location, locationChosen]);
 
   // Until a location is chosen, the page stops at the map: Your Plan and
   // Explore aren't rendered and the page can't scroll, so the first step
@@ -369,7 +392,7 @@ export default function Home() {
 
   // Only promise a stay if one is in the plan (away from Galway the live
   // search may not have found any) — or one may still be on its way.
-  const hasStay = visibleCategories.includes("stay") || (!removedCategories.includes("stay") && liveStatus === "loading");
+  const hasStay = visibleCategories.includes("stay") || (!removedCategories.includes("stay") && liveLoading);
   const planSummary = `Here's ${VIBE_PHRASES[vibe]} in ${location.name} ${TIME_PHRASES[time]}${hasStay ? " with a stay to round it off" : ""}.`;
 
   // If arriving via a "?load=<id>" link (from the Bookings page), pull that
@@ -590,7 +613,7 @@ export default function Home() {
             isOpen={openMenu === "when"}
             onToggle={() => setOpenMenu(openMenu === "when" ? null : "when")}
             onSelect={(key) => {
-              setTime(key);
+              selectTime(key);
               setOpenMenu(null);
             }}
           />
@@ -627,10 +650,9 @@ export default function Home() {
           {liveLoading ? (
             <LoadingBar key={searchCount} label={`Finding live places near ${location.name}…`} />
           ) : (
-            liveStatus &&
-            liveStatus !== "loading" && (
+            emptyMessage && (
               <span className="text-[13px] leading-snug" style={{ color: "#767676" }}>
-                {liveStatus}
+                {emptyMessage}
               </span>
             )
           )}
@@ -916,8 +938,8 @@ export default function Home() {
               <div style={{ borderRadius: 20, background: "#F7F5EE", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
                 <span style={{ fontSize: 13, color: "#767766", lineHeight: 1.4 }}>
                   {locationChosen
-                    ? liveStatus && liveStatus !== "loading"
-                      ? liveStatus
+                    ? emptyMessage
+                      ? emptyMessage
                       : `Nothing to book near ${location.name} yet — try another place on the map.`
                     : "Search for a location on the map, and the places in your plan will appear here to book."}
                 </span>

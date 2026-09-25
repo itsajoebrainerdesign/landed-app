@@ -100,9 +100,12 @@ built-in catalog (the reason is logged, and shown in the browser console).
 
 ## Live search: cost and limits
 
-Measured on 2026-09-24 (Galway and London, uncached):
+One search covers Now, Tonight and Tomorrow together, so switching When
+in the app is instant; a new search only runs when the place or vibe
+changes. Measured 2026-09-24/25 (uncached):
 
-- **~47–55 s** per search, so results appear well after the page loads.
+- **~45–80 s** per search (the longer end since it covers all three
+  timeframes), so results appear well after the page loads.
   An animated loading bar shows meanwhile; near Galway the built-in
   catalog shows underneath it.
 - **Claude**: ~22k input + ~2k output tokens and up to 5 web searches —
