@@ -277,38 +277,85 @@ export default function Home() {
     setLiveStatus(null);
     setLiveLoading(true);
     setSearchStartedAt(Date.now());
+    // The plan streams in (see /api/plan): a draft from Google's nearby
+    // places after ~1 s, then each category as its AI pick finishes, then
+    // the final result. The cards update at each step; the loading bar
+    // stays until the final one.
+    let current: LiveResults | null = null;
+    const show = (next: LiveResults | null) => {
+      current = next;
+      if (next) {
+        Object.values(next).forEach((byCat) =>
+          Object.values(byCat ?? {}).forEach((opts) => opts?.forEach((o) => knownOptionsRef.current.set(o.id, o)))
+        );
+      }
+      setLiveOptions(next);
+      if (!manualPicksRef.current) {
+        setPicks(computePicks(vibe, budgetRef.current, mergeCatalog(next?.[timeRef.current] ?? null, useStatic)));
+      }
+    };
+    type PlanEvent =
+      | { type: "draft"; options: LiveResults }
+      | { type: "category"; category: CategoryKey; options: LiveResults }
+      | { type: "final"; options: LiveResults; source: string; warnings?: string[] };
+    const handle = (event: PlanEvent) => {
+      if (event.type === "draft") {
+        show(event.options);
+      } else if (event.type === "category") {
+        // Replace just this category, in every timeframe.
+        const merged: LiveResults = { ...(current ?? {}) };
+        for (const t of ["now", "tonight", "tomorrow"] as TimeKey[]) {
+          merged[t] = { ...(merged[t] ?? {}), [event.category]: event.options[t]?.[event.category] ?? [] };
+        }
+        show(merged);
+      } else {
+        if (event.warnings?.length) console.warn("[Landed] live search:", event.warnings.join(" "));
+        const live = event.source === "live" ? event.options : null;
+        if (live) resultsCacheRef.current.set(cacheKey, live);
+        setLiveLoading(false);
+        setLiveStatus(live ? null : event.warnings?.[0] || null);
+        show(live);
+      }
+    };
     fetch("/api/plan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ location: location.label, lat: location.lat, lng: location.lng, vibe }),
       signal: controller.signal,
     })
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
-      .then((data: { options?: LiveResults; source?: string; warnings?: string[] }) => {
-        if (data.warnings?.length) console.warn("[Landed] live search:", data.warnings.join(" "));
-        const live = data.source === "live" && data.options ? data.options : null;
-        if (live) {
-          Object.values(live).forEach((byCat) =>
-            Object.values(byCat ?? {}).forEach((opts) => opts?.forEach((o) => knownOptionsRef.current.set(o.id, o)))
-          );
-          resultsCacheRef.current.set(cacheKey, live);
+      .then(async (res) => {
+        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let finished = false;
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let nl;
+          while ((nl = buffer.indexOf("\n")) >= 0) {
+            const line = buffer.slice(0, nl).trim();
+            buffer = buffer.slice(nl + 1);
+            if (!line) continue;
+            const event = JSON.parse(line) as PlanEvent;
+            if (event.type === "final") finished = true;
+            handle(event);
+          }
         }
-        setLiveLoading(false);
-        setLiveOptions(live);
-        setLiveStatus(live ? null : data.warnings?.[0] || null);
-        if (!manualPicksRef.current) {
-          setPicks(computePicks(vibe, budgetRef.current, mergeCatalog(live?.[timeRef.current] ?? null, useStatic)));
-        }
+        if (!finished) throw new Error("Live search ended early");
       })
       .catch((err) => {
         if (controller.signal.aborted) return;
         console.warn("[Landed] live search unavailable.", err);
         setLiveLoading(false);
-        setLiveOptions(null);
         setLiveStatus(null);
-        // Keep the cards consistent with the swap sheet, which is now
-        // back on the fallback catalog — unless the user chose these picks.
-        if (!manualPicksRef.current) setPicks(computePicks(vibe, budgetRef.current, mergeCatalog(null, useStatic)));
+        // Keep whatever had already arrived (the draft, finished categories);
+        // with nothing at all, fall back — unless the user chose these picks.
+        if (!current) {
+          setLiveOptions(null);
+          if (!manualPicksRef.current) setPicks(computePicks(vibe, budgetRef.current, mergeCatalog(null, useStatic)));
+        }
       });
     return () => controller.abort();
   }, [vibe, location, locationChosen]);

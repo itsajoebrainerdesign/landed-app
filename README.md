@@ -62,7 +62,9 @@ off — but here's what each one needs.
 1. Create a project at https://supabase.com/dashboard.
 2. **Settings → API**: copy the Project URL into
    `NEXT_PUBLIC_SUPABASE_URL` and the anon / publishable key into
-   `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+   `NEXT_PUBLIC_SUPABASE_ANON_KEY`. For the shared search cache, also
+   copy the **service_role** key into `SUPABASE_SERVICE_ROLE_KEY`
+   (server-only — see "Shared cache setup").
 3. **SQL Editor**: paste and run all of `supabase/schema.sql`. It creates
    the `profiles`, `bookings`, and `plan_searches` tables with Row Level
    Security so each user can only reach their own rows. It's safe to
@@ -100,59 +102,55 @@ In https://console.cloud.google.com, enable **Maps JavaScript API** and
 prepaid: if the balance runs out, live search quietly falls back to the
 built-in catalog (the reason is logged, and shown in the browser console).
 
-## Live search: cost and limits
+## Live search: speed, cost and limits
 
-One search covers Now, Tonight and Tomorrow together, so switching When
-in the app is instant; a new search only runs when the place or vibe
-changes. Measured 2026-09-24/25 (uncached):
+How a search works (`app/api/plan/route.ts`), streamed so the plan fills
+in as it's found:
 
-- **~40 s** per search (two budget tiers — Modest and Luxury — with the
-  plan's pick plus 3 swaps each, for all three timeframes), so results
-  appear well after the page loads.
-  An animated loading bar shows meanwhile; near Galway the built-in
-  catalog shows underneath it.
-How a search works: Google Places first lists what's actually near the
-pin in each category (~8–10 Nearby Search requests; two each for
-restaurants and bars, since Google returns at most 20 per request). The
-AI chooses from those lists and uses web search (max 3) only for what's
-on, vibe and prices. Anything picked from a list is already verified, so
-only the occasional unlisted pick needs its own lookup.
+1. **~1 s — draft.** Google Places lists what's near the pin in each
+   category (~8–10 Nearby Search requests). These show straight away as
+   the plan, tiered Modest/Luxury by Google's £–££££ price level.
+2. **~8–12 s — AI picks.** Six small AI calls run in parallel, one per
+   category, each choosing the best fits for the vibe from its Google
+   list, with price estimates, tiers and highlights. Each category's
+   cards upgrade as soon as it's done. Only "live" uses web search (for
+   what's on). Picks from a list are already verified.
+3. **Cached for 12 hours** per area (~1 km), vibe and local date — in
+   memory, and in the shared `plan_cache` table when
+   `SUPABASE_SERVICE_ROLE_KEY` is set — so the next search of that area
+   is instant for everyone. "Now" isn't stored: it's worked out from each
+   venue's opening hours whenever results are served.
 
-- **Claude**: roughly **$0.15–0.20** per search at list prices.
-- **Google Places**: ~8–12 requests with Enterprise-tier fields (rating,
-  phone, opening hours) — roughly **$0.30–0.40** per search at list
-  prices, before Google's monthly free allowance. (Before the lists,
-  it was ~30 one-by-one lookups, about $1.)
-- St Albans centre, 2026-09-25: 35 restaurants, 29 bars, 20 attractions,
-  20 live venues, 20 car parks and 12 stays listed; search took 28 s.
+Measured 2026-09-25 (St Albans): draft at 0.9 s, all categories by 11 s
+(was ~37 s as one big AI call), repeat search 0.01 s.
 
-Protections in `app/api/plan/route.ts`:
+- **Cost per new search**: roughly 30–40p (Claude ~15–20p, Google Places
+  ~8–12 Enterprise-tier requests). Cached searches cost nothing.
+
+Protections:
 
 - Signed-in users get **10 uncached searches per hour and 30 per day**
   (`LIMIT_PER_HOUR` / `LIMIT_PER_DAY`), counted in the `plan_searches`
   table so the limit holds across server instances.
 - Guests get **5 per hour and 15 per day per IP address**
   (`GUEST_LIMIT_PER_HOUR` / `GUEST_LIMIT_PER_DAY`), counted in memory —
-  per server instance, and reset when Vercel starts a new one, so it's
-  a speed bump rather than a guarantee.
-- Over a limit, people get the fallback catalog and a message.
+  per server instance, so a speed bump rather than a guarantee.
+- `SEARCH_LIMITS_ON` switches both on or off (off while testing).
+- A best-effort per-IP cap (60 requests per 10 minutes) returns HTTP 429.
 
 **Set hard spend caps as the real backstop** (guests can't be limited
 reliably without accounts):
 - Anthropic: console.anthropic.com → Settings → Limits → set a monthly
   spend limit.
 - Google: Cloud Console → APIs & Services → Places API (New) → Quotas →
-  cap "Text Search requests per day" (≈30 per uncached search).
-- A best-effort per-IP cap (60 requests per 10 minutes, per server
-  instance) returns HTTP 429.
-- Identical searches (same ~1 km area, time, and vibe) share a result for
-  30 minutes and don't count against the limit.
+  cap "Nearby Search" / "Text Search" requests per day.
 
-That result cache is in memory, so on a serverless host each instance has
-its own and it's lost on redeploy. To share it, add a `plan_cache` table
-and write to it with a server-only Supabase **service role** key — not the
-anon key, or any signed-in user could write fake venues into everyone's
-results.
+### Shared cache setup
+
+In Supabase → **Settings → API**, copy the **service_role** key (secret)
+into Vercel as `SUPABASE_SERVICE_ROLE_KEY` (type **Secret**, never
+`NEXT_PUBLIC_`), re-run `supabase/schema.sql` (creates `plan_cache`), and
+redeploy. Without it, results are cached per server instance only.
 
 ## Deploying (Vercel)
 

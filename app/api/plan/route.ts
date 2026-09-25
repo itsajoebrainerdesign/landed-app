@@ -7,6 +7,7 @@ import type { CategoryKey, CategoryOption } from "../../lib/categoryOptions";
 import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_OPTIONS } from "../../lib/categoryOptions";
 import { GALWAY, haversineKm } from "../../lib/geo";
 import { getServerSupabase } from "../../lib/supabase/server";
+import { getAdminSupabase } from "../../lib/supabase/admin";
 
 /**
  * POST /api/plan
@@ -16,22 +17,34 @@ import { getServerSupabase } from "../../lib/supabase/server";
  * (lat/lng default to Galway city centre. A `time` field is accepted but
  * ignored — one search covers every timeframe.)
  *
- * Response: { options: { now, tonight, tomorrow }, source, warnings } —
- * each timeframe a Partial<Record<CategoryKey, CategoryOption[]>>, so
- * switching When in the app never needs another search.
+ * Response: a stream of JSON lines (NDJSON), so the plan fills in as it's
+ * found instead of after one long wait:
+ *   {"type":"draft","options":…}      ~1 s — straight from Google's lists
+ *   {"type":"category","category":"bar","options":…}   × up to 6, as each
+ *                                      category's AI pick finishes
+ *   {"type":"final","options":…,"source":"live"|"static","warnings":[…]}
+ * `options` is { now, tonight, tomorrow }, each a Partial<Record<
+ * CategoryKey, CategoryOption[]>> (for "category", just that category).
+ * A cached result is a single "final" line.
  *
- * 1) AI search — Claude with the web_search tool finds live, current
- *    candidates per category, marking which timeframes each suits.
- * 2) Verification — each candidate is looked up in Google Places (New) to
- *    confirm it's real and operating, and to get its canonical address,
- *    phone, rating, and location.
- * 3) Assembly — verified venues are mapped into the same CategoryOption
- *    shape the static catalog uses, so the frontend's existing pick logic
- *    (distance / vibe / budget) ranks them unchanged.
+ * How a search works:
+ * 1) Google Places lists what's actually near the pin in each category
+ *    (Nearby Search) → sent straight away as the draft plan, tiered by
+ *    Google's price level.
+ * 2) Six small AI calls run in parallel, one per category, each choosing
+ *    the best fits for the vibe from its Google list, with price
+ *    estimates, budget tiers and highlights. Only "live" uses web search
+ *    (for what's on). Picks from a list are already verified; the odd
+ *    unlisted pick is looked up in Google Places.
+ * 3) The finished result is cached — in memory and, when
+ *    SUPABASE_SERVICE_ROLE_KEY is set, in the shared `plan_cache` table —
+ *    for CACHE_TTL_MS per area, vibe and local date, so the next search
+ *    of that area is instant for everyone. "Now" isn't stored: it's worked
+ *    out from each venue's opening hours whenever results are served, so
+ *    cached results stay right as the day goes on.
  *
- * Budget isn't sent: every candidate carries an estimated price, and the
- * client applies Modest/Luxury itself, so changing budget never costs
- * another search.
+ * Budget isn't sent: every venue carries a tier, and the client applies
+ * Modest/Luxury itself, so changing budget never costs another search.
  *
  * Abuse protection — every uncached search spends real money. Anyone can
  * get live results, signed in or not; cached results never count.
@@ -46,20 +59,19 @@ import { getServerSupabase } from "../../lib/supabase/server";
  * - A best-effort per-IP limit (in memory, per instance) caps request
  *   floods before any upstream work.
  *
- * Never throws to the client. Missing keys, used-up
- * quota, or failed upstream calls come back as 200 with
- * `source: "static"` and a `warnings` list, and the frontend keeps using
- * its fallback. A malformed body is a 400; an IP flood is a 429.
+ * Never fails the stream. Missing keys, used-up quota, or failed upstream
+ * calls end in a "final" line with `source: "static"` and `warnings`, and
+ * the frontend keeps using its fallback. A malformed body is a 400 and an
+ * IP flood a 429 (plain JSON, before any streaming).
  */
 
-// Claude + web search + ~30 Places lookups can take a minute or more.
+// Six AI calls in parallel plus Places; well under a minute, but allow slack.
 export const maxDuration = 300;
 
 type PlanRequest = { location: string; lat: number; lng: number; vibe: VibeKey };
 type CategoryResults = Partial<Record<CategoryKey, CategoryOption[]>>;
 type LiveOptions = Partial<Record<TimeKey, CategoryResults>>;
 const TIME_KEYS = TIME_OPTIONS.map((o) => o.key);
-type PlanResponse = { options: LiveOptions; source: "live" | "static"; warnings: string[] };
 
 const DEFAULT_LOCATION = "Galway, Ireland";
 // Results are local to the exact point on the map: walking distance first,
@@ -82,13 +94,15 @@ const PER_TIER = 4;
 const BUDGET_KEYS = BUDGET_OPTIONS.map((o) => o.key);
 // …and at most this many kept per tier, per category, per timeframe.
 const OPTIONS_PER_TIER = 4;
-const CACHE_TTL_MS = 30 * 60 * 1000;
+// Venues and what suits an area don't change hour to hour; "now" is worked
+// out from opening hours at serve time, so results keep for half a day.
+const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const CACHE_MAX_ENTRIES = 500;
 
 // TESTING: per-user and per-guest search limits are switched off while
 // the app is being tested, so every search runs. Set this back to true
 // before sharing the app more widely — each uncached search costs about
-// $1.20 (Claude + Google Places). The per-IP flood guard below stays on.
+// 30–40p (Claude + Google Places). The per-IP flood guard below stays on.
 const SEARCH_LIMITS_ON = false;
 
 // Uncached live searches per signed-in user.
@@ -134,6 +148,14 @@ function parseRequest(body: unknown): PlanRequest | string {
   };
 }
 
+// ── Streaming ───────────────────────────────────────────────────────────
+
+type StreamEvent =
+  | { type: "draft"; options: LiveOptions }
+  | { type: "category"; category: CategoryKey; options: LiveOptions }
+  | { type: "final"; options: LiveOptions; source: "live" | "static"; warnings: string[] };
+type Emit = (event: StreamEvent) => void;
+
 export async function POST(req: NextRequest) {
   if (!allowIp(clientIp(req))) {
     return NextResponse.json({ error: "Too many requests — try again in a few minutes." }, { status: 429 });
@@ -149,45 +171,101 @@ export async function POST(req: NextRequest) {
   if (typeof parsed === "string") {
     return NextResponse.json({ error: parsed }, { status: 400 });
   }
+  const ip = clientIp(req);
 
-  try {
-    return NextResponse.json(await handlePlan(parsed, clientIp(req)));
-  } catch (err) {
-    // Last-resort guard — every step below already catches its own errors.
-    console.error("[api/plan] unexpected error", err);
-    return NextResponse.json(staticResponse(["Live search failed unexpectedly."]));
-  }
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      let closed = false;
+      const emit: Emit = (event) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
+        } catch {
+          closed = true; // client went away — keep working so the result still gets cached
+        }
+      };
+      try {
+        await handlePlan(parsed, ip, emit);
+      } catch (err) {
+        // Last-resort guard — every step below already catches its own errors.
+        console.error("[api/plan] unexpected error", err);
+        emit({ type: "final", options: {}, source: "static", warnings: ["Live search failed unexpectedly."] });
+      }
+      if (!closed) controller.close();
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-store",
+      // Stop proxies buffering the stream (which would undo the point of it).
+      "X-Accel-Buffering": "no",
+    },
+  });
 }
 
-function staticResponse(warnings: string[]): PlanResponse {
-  return { options: {}, source: "static", warnings };
-}
-
-async function handlePlan(input: PlanRequest, ip: string): Promise<PlanResponse> {
+async function handlePlan(input: PlanRequest, ip: string, emit: Emit): Promise<void> {
   const key = cacheKey(input);
-  const cached = readCache(key);
-  if (cached) return cached;
+  const served = (data: PlanData) =>
+    emit({ type: "final", options: serveOptions(data, Date.now()), source: "live", warnings: [] });
+
+  const cached = readMemoryCache(key) ?? (await readSharedCache(key));
+  if (cached) {
+    writeMemoryCache(key, cached);
+    served(cached);
+    return;
+  }
+  // Someone else is already searching this area and vibe — wait for theirs.
+  const pending = inFlight.get(key);
+  if (pending) {
+    const data = await pending.catch(() => null);
+    if (data) {
+      served(data);
+      return;
+    }
+  }
 
   // Signed in → the shared per-user quota; otherwise → the per-IP guest
   // quota. (No Supabase, or its auth check failing, just means "guest".)
-  const supabase = await getServerSupabase();
-  let userId: string | null = null;
-  if (supabase) {
-    try {
-      const { data } = await supabase.auth.getUser();
-      userId = data.user?.id ?? null;
-    } catch {
-      userId = null;
+  if (SEARCH_LIMITS_ON) {
+    const supabase = await getServerSupabase();
+    let userId: string | null = null;
+    if (supabase) {
+      try {
+        const { data } = await supabase.auth.getUser();
+        userId = data.user?.id ?? null;
+      } catch {
+        userId = null;
+      }
+    }
+    const quotaError = supabase && userId ? await consumeQuota(supabase, userId) : consumeGuestQuota(ip);
+    if (quotaError) {
+      emit({ type: "final", options: {}, source: "static", warnings: [quotaError] });
+      return;
     }
   }
-  if (SEARCH_LIMITS_ON) {
-    const quotaError = supabase && userId ? await consumeQuota(supabase, userId) : consumeGuestQuota(ip);
-    if (quotaError) return staticResponse([quotaError]);
-  }
 
-  const value = buildPlan(input);
-  writeCache(key, value);
-  return value;
+  const search = buildPlan(input, emit);
+  const promise = search.then((r) => r.data);
+  inFlight.set(key, promise as Promise<PlanData>);
+  let result: BuildResult;
+  try {
+    result = await search;
+  } finally {
+    inFlight.delete(key);
+  }
+  if (result.data) {
+    // Only a complete result is kept — if some categories' AI calls failed
+    // (e.g. a rate limit), the next search should try again, not reuse it.
+    if (result.complete) {
+      writeMemoryCache(key, result.data);
+      void writeSharedCache(key, result.data);
+    }
+    emit({ type: "final", options: serveOptions(result.data, Date.now()), source: "live", warnings: result.warnings });
+  } else {
+    emit({ type: "final", options: {}, source: "static", warnings: result.warnings });
+  }
 }
 
 // ── Per-IP limit (best effort, per instance) ────────────────────────────
@@ -254,71 +332,277 @@ async function consumeQuota(supabase: SupabaseClient, userId: string): Promise<s
   return null;
 }
 
-// ── Cache ───────────────────────────────────────────────────────────────
-// Identical requests (same ~1 km area, time, and vibe) share one result
-// for 30 minutes, and don't count against anyone's quota. In-memory, per
-// server instance — see README for moving this to a shared table.
 
-const cache = new Map<string, { expires: number; value: Promise<PlanResponse> }>();
+// ── Cache ───────────────────────────────────────────────────────────────
+// A finished search is kept for CACHE_TTL_MS per area (~1 km), vibe and
+// the pin's local date — in memory on this server instance, and in the
+// shared `plan_cache` table (when SUPABASE_SERVICE_ROLE_KEY is set) so it
+// survives new instances and serves every user. Cached results don't
+// count against anyone's quota.
+
+const memoryCache = new Map<string, { expires: number; data: PlanData }>();
+const inFlight = new Map<string, Promise<PlanData | null>>();
+
+// The pin's local date, approximated from longitude (15° per hour) — close
+// enough to keep "tonight" and "tomorrow" meaning the right days.
+function localDate(lng: number): string {
+  return new Date(Date.now() + (lng / 15) * 3600_000).toISOString().slice(0, 10);
+}
 
 function cacheKey(input: PlanRequest): string {
-  return `${input.lat.toFixed(2)},${input.lng.toFixed(2)}|${input.vibe}`;
+  return `v2|${input.lat.toFixed(2)},${input.lng.toFixed(2)}|${input.vibe}|${localDate(input.lng)}`;
 }
 
-function readCache(key: string): Promise<PlanResponse> | null {
-  const hit = cache.get(key);
-  return hit && hit.expires > Date.now() ? hit.value : null;
-}
-
-function writeCache(key: string, value: Promise<PlanResponse>) {
-  if (cache.size >= CACHE_MAX_ENTRIES) {
-    for (const [k, v] of cache) if (v.expires <= Date.now()) cache.delete(k);
-    if (cache.size >= CACHE_MAX_ENTRIES) cache.delete(cache.keys().next().value!);
+function readMemoryCache(key: string): PlanData | null {
+  const hit = memoryCache.get(key);
+  if (!hit) return null;
+  if (hit.expires <= Date.now()) {
+    memoryCache.delete(key);
+    return null;
   }
-  cache.set(key, { expires: Date.now() + CACHE_TTL_MS, value });
-  // Don't keep failed or empty results around — let the next request retry.
-  value.then(
-    (v) => {
-      if (v.source !== "live") cache.delete(key);
-    },
-    () => cache.delete(key)
-  );
+  return hit.data;
 }
 
-async function buildPlan(input: PlanRequest): Promise<PlanResponse> {
+function writeMemoryCache(key: string, data: PlanData) {
+  if (memoryCache.size >= CACHE_MAX_ENTRIES) {
+    for (const [k, v] of memoryCache) if (v.expires <= Date.now()) memoryCache.delete(k);
+    if (memoryCache.size >= CACHE_MAX_ENTRIES) memoryCache.delete(memoryCache.keys().next().value!);
+  }
+  memoryCache.set(key, { expires: Date.now() + CACHE_TTL_MS, data });
+}
+
+// The shared table is written with the server-only service-role key and
+// has no RLS policies, so browsers (anon key) can't read or write it — no
+// one can plant fake venues in other people's results.
+async function readSharedCache(key: string): Promise<PlanData | null> {
+  const admin = getAdminSupabase();
+  if (!admin) return null;
+  try {
+    const { data, error } = await admin
+      .from("plan_cache")
+      .select("data")
+      .eq("key", key)
+      .gt("expires_at", new Date().toISOString())
+      .maybeSingle();
+    if (error) {
+      console.error("[api/plan] shared cache read failed", error.message);
+      return null;
+    }
+    return (data?.data as PlanData | undefined) ?? null;
+  } catch (err) {
+    console.error("[api/plan] shared cache read failed", err);
+    return null;
+  }
+}
+
+async function writeSharedCache(key: string, data: PlanData): Promise<void> {
+  const admin = getAdminSupabase();
+  if (!admin) return;
+  try {
+    const now = new Date();
+    const { error } = await admin
+      .from("plan_cache")
+      .upsert({ key, data, expires_at: new Date(now.getTime() + CACHE_TTL_MS).toISOString() });
+    if (error) console.error("[api/plan] shared cache write failed", error.message);
+    // Tidy up expired rows now and then.
+    if (Math.random() < 0.05) await admin.from("plan_cache").delete().lt("expires_at", now.toISOString());
+  } catch (err) {
+    console.error("[api/plan] shared cache write failed", err);
+  }
+}
+
+// ── Plan data, and "now" from opening hours ─────────────────────────────
+// What's stored (and cached) per search. "Tonight" and "tomorrow" are
+// fixed lists; "now" is derived whenever results are served: every venue
+// in `pool` that's open at that moment by its Google opening hours (stays
+// and car parks always count), so a cached result stays right all day.
+
+type OpeningPeriodPoint = { day: number; hour?: number; minute?: number };
+type OpeningPeriod = { open?: OpeningPeriodPoint; close?: OpeningPeriodPoint };
+type OpeningHours = { periods: OpeningPeriod[]; utcOffsetMinutes?: number };
+
+type PlanData = {
+  pool: CategoryResults;
+  tonight: CategoryResults;
+  tomorrow: CategoryResults;
+  hours: Record<string, OpeningHours | null>;
+};
+
+type BuildResult = { data: PlanData | null; warnings: string[]; complete: boolean };
+
+function emptyPlan(): PlanData {
+  return { pool: {}, tonight: {}, tomorrow: {}, hours: {} };
+}
+
+const WEEK_MINUTES = 7 * 24 * 60;
+
+// Open at this instant? Unknown hours count as open (better to show a
+// place than hide it on missing data).
+function isOpenAt(hours: OpeningHours | null | undefined, nowMs: number): boolean {
+  if (!hours?.periods?.length) return true;
+  const p0 = hours.periods[0];
+  if (hours.periods.length === 1 && p0.open && !p0.close) return true; // open 24/7
+  const local = new Date(nowMs + (hours.utcOffsetMinutes ?? 0) * 60_000);
+  const t = local.getUTCDay() * 1440 + local.getUTCHours() * 60 + local.getUTCMinutes();
+  const at = (x: OpeningPeriodPoint) => x.day * 1440 + (x.hour ?? 0) * 60 + (x.minute ?? 0);
+  return hours.periods.some((period) => {
+    if (!period.open || !period.close) return false;
+    const open = at(period.open);
+    let close = at(period.close);
+    if (close <= open) close += WEEK_MINUTES; // wraps past Saturday night
+    return (t >= open && t < close) || (t + WEEK_MINUTES >= open && t + WEEK_MINUTES < close);
+  });
+}
+
+// Closest first, keeping the nearest OPTIONS_PER_TIER in each budget tier.
+function trimTiers(list: CategoryOption[]): CategoryOption[] {
+  const perTier = new Map<string, number>();
+  return [...list]
+    .sort((a, b) => parseFloat(a.meta[0]) - parseFloat(b.meta[0]))
+    .filter((o) => {
+      const n = perTier.get(o.budget ?? "modest") ?? 0;
+      perTier.set(o.budget ?? "modest", n + 1);
+      return n < OPTIONS_PER_TIER;
+    });
+}
+
+function nowFor(data: PlanData, cat: CategoryKey, nowMs: number): CategoryOption[] {
+  const always = cat === "stay" || cat === "parking";
+  return trimTiers((data.pool[cat] ?? []).filter((o) => always || isOpenAt(data.hours[o.id], nowMs)));
+}
+
+function serveOptions(data: PlanData, nowMs: number): LiveOptions {
+  const now: CategoryResults = {};
+  for (const cat of CATEGORY_ORDER) {
+    const list = nowFor(data, cat, nowMs);
+    if (list.length) now[cat] = list;
+  }
+  return { now, tonight: data.tonight, tomorrow: data.tomorrow };
+}
+
+function serveCategory(data: PlanData, cat: CategoryKey, nowMs: number): LiveOptions {
+  return {
+    now: { [cat]: nowFor(data, cat, nowMs) },
+    tonight: { [cat]: data.tonight[cat] ?? [] },
+    tomorrow: { [cat]: data.tomorrow[cat] ?? [] },
+  };
+}
+
+function mergeCategory(into: PlanData, from: PlanData, cat: CategoryKey) {
+  into.pool[cat] = from.pool[cat] ?? [];
+  into.tonight[cat] = from.tonight[cat] ?? [];
+  into.tomorrow[cat] = from.tomorrow[cat] ?? [];
+  for (const o of into.pool[cat]!.concat(into.tonight[cat]!, into.tomorrow[cat]!)) {
+    if (!(o.id in into.hours)) into.hours[o.id] = from.hours[o.id] ?? null;
+  }
+}
+
+function hasVenues(data: PlanData): boolean {
+  return CATEGORY_ORDER.some((c) => (data.tonight[c]?.length ?? 0) + (data.tomorrow[c]?.length ?? 0) + (data.pool[c]?.length ?? 0) > 0);
+}
+
+// ── Building a plan ─────────────────────────────────────────────────────
+
+async function buildPlan(input: PlanRequest, emit: Emit): Promise<BuildResult> {
   const warnings: string[] = [];
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   const placesKey = process.env.GOOGLE_PLACES_API_KEY;
-  if (!anthropicKey) warnings.push("ANTHROPIC_API_KEY is not set — live AI search is disabled.");
-  if (!placesKey) warnings.push("GOOGLE_PLACES_API_KEY is not set — venues can't be verified, so live results are disabled.");
-  if (!anthropicKey || !placesKey) return staticResponse(warnings);
+  if (!placesKey) {
+    warnings.push("GOOGLE_PLACES_API_KEY is not set — live results are disabled.");
+    return { data: null, warnings, complete: false };
+  }
 
-  // What's actually near the pin in each category, from Google — the AI
-  // chooses from these lists (see findNearbyLists).
-  const nearbyLists = await findNearbyLists(input, placesKey, warnings);
-  const candidates = await findCandidatesWithAI(input, anthropicKey, warnings, nearbyLists);
-  if (candidates.length === 0) return staticResponse(warnings);
+  // 1) What's actually near the pin, from Google → the instant draft.
+  const lists = await findNearbyLists(input, placesKey, warnings);
+  const draft = draftFromLists(lists, input);
+  if (hasVenues(draft)) emit({ type: "draft", options: serveOptions(draft, Date.now()) });
+  if (!anthropicKey) {
+    warnings.push("ANTHROPIC_API_KEY is not set — showing Google's nearby places without AI picks.");
+    return { data: hasVenues(draft) ? draft : null, warnings, complete: false };
+  }
 
-  const verified = await verifyWithGooglePlaces(candidates, input, placesKey, warnings, nearbyLists);
-  const options = rankAndAssemble(verified, input);
-  const count = (t: TimeKey) => Object.values(options[t] ?? {}).reduce((n, o) => n + (o?.length ?? 0), 0);
-  const source = TIME_KEYS.some((t) => count(t) > 0) ? "live" : "static";
-  if (source === "static") warnings.push("No AI candidates could be verified in Google Places.");
+  // 2) One small AI call per category, all at once; each category is sent
+  //    as soon as it's done. A category whose AI call fails keeps its
+  //    draft from Google, so the plan is never worse than the draft.
+  const result = emptyPlan();
+  let aiDone = 0;
+  const started = Date.now();
+  await Promise.all(
+    CATEGORY_ORDER.map(async (cat) => {
+      const part = await searchCategory(cat, input, anthropicKey, placesKey, lists, warnings).catch((err) => {
+        console.error(`[api/plan] ${cat} search failed`, err);
+        return null;
+      });
+      if (part) aiDone++;
+      const use = part ?? draft;
+      mergeCategory(result, use, cat);
+      emit({ type: "category", category: cat, options: serveCategory(use, cat, Date.now()) });
+    })
+  );
+
   console.info(
     `[api/plan] ${input.location} ${input.vibe}: listed ` +
-      CATEGORY_ORDER.map((c) => `${c} ${nearbyLists[c]?.length ?? 0}`).join(" / ") +
-      `; ${candidates.length} candidates, ${verified.length} verified, kept ` +
-      TIME_KEYS.map((t) => `${t} ${count(t)}`).join(" / ")
+      CATEGORY_ORDER.map((c) => `${c} ${lists[c]?.length ?? 0}`).join(" / ") +
+      `; AI done for ${aiDone}/${CATEGORY_ORDER.length} categories in ${((Date.now() - started) / 1000).toFixed(1)}s`
   );
-  return { options, source, warnings };
+  if (aiDone < CATEGORY_ORDER.length) warnings.push(`${CATEGORY_ORDER.length - aiDone} categories are showing Google's nearby places without AI picks.`);
+  return { data: hasVenues(result) ? result : null, warnings, complete: aiDone === CATEGORY_ORDER.length };
 }
 
-// ── Step 1: AI search ───────────────────────────────────────────────────
+// The draft: Google's nearby places as they are — tiered by Google's price
+// level (£££ and up → luxury), priced with that band rather than an
+// estimate, and described by their kind.
+function draftFromLists(lists: NearbyLists, input: PlanRequest): PlanData {
+  const verified: Verified[] = [];
+  for (const cat of CATEGORY_ORDER) {
+    for (const { place, distanceKm } of lists[cat] ?? []) {
+      const level = place.priceLevel ?? "";
+      verified.push({
+        candidate: {
+          category: cat,
+          name: place.displayName!.text,
+          price_gbp: level === "PRICE_LEVEL_FREE" ? 0 : NaN,
+          priceLabel: level && level !== "PRICE_LEVEL_FREE" ? PRICE_LEVEL_LABEL[level] : undefined,
+          budget: level === "PRICE_LEVEL_EXPENSIVE" || level === "PRICE_LEVEL_VERY_EXPENSIVE" ? "luxury" : "modest",
+          times: ["now", "tonight", "tomorrow"],
+          highlight: kindLabel(place),
+        },
+        place,
+        distanceKm,
+      });
+    }
+  }
+  return assemble(verified, input);
+}
+
+function kindLabel(place: Place): string {
+  const kind = (place.primaryType || "").replace(/_/g, " ");
+  return kind ? kind.charAt(0).toUpperCase() + kind.slice(1) : "";
+}
+
+async function searchCategory(
+  cat: CategoryKey,
+  input: PlanRequest,
+  anthropicKey: string,
+  placesKey: string,
+  lists: NearbyLists,
+  warnings: string[]
+): Promise<PlanData | null> {
+  const candidates = await findCandidatesForCategory(cat, input, anthropicKey, lists[cat] ?? [], warnings);
+  if (candidates.length === 0) return null;
+  const verified = await verifyWithGooglePlaces(candidates, input, placesKey, warnings, lists);
+  if (verified.length === 0) return null;
+  return assemble(verified, input);
+}
+
+// ── AI pick, one category at a time ─────────────────────────────────────
 
 type Candidate = {
   category: CategoryKey;
   name: string;
   price_gbp: number;
+  // Draft only: Google's price band ("££") instead of an estimate.
+  priceLabel?: string;
   times: TimeKey[];
   budget: BudgetKey;
   highlight: string;
@@ -326,8 +610,7 @@ type Candidate = {
 
 const SUBMIT_TOOL: Anthropic.Beta.BetaTool = {
   name: "submit_venues",
-  description:
-    "Submit the final list of venue candidates. Call this exactly once, after you have finished searching.",
+  description: "Submit the chosen venues. Call this exactly once, when you've chosen.",
   strict: true,
   input_schema: {
     type: "object",
@@ -339,21 +622,20 @@ const SUBMIT_TOOL: Anthropic.Beta.BetaTool = {
         items: {
           type: "object",
           additionalProperties: false,
-          required: ["category", "name", "price_gbp", "budget", "times", "highlight"],
+          required: ["name", "price_gbp", "budget", "times", "highlight"],
           properties: {
-            category: { type: "string", enum: [...CATEGORY_ORDER] },
             name: {
               type: "string",
-              description: "The venue's real business name as it appears on Google Maps — no event names or descriptions.",
+              description: "The venue's name exactly as written in the Google list (or as Google Maps would list it, if not from the list).",
             },
             price_gbp: {
               type: "number",
-              description: "Typical price in British pounds (GBP) for this category's unit (see instructions), converted if the venue charges in another currency. 0 if free.",
+              description: "Typical price in British pounds (GBP) for this category's unit, converted if the venue charges in another currency. 0 if free.",
             },
             budget: {
               type: "string",
               enum: BUDGET_KEYS,
-              description: "The budget tier this venue belongs to for its category, relative to the area: modest (cheap or free through mid-range) or luxury (premium).",
+              description: "modest (cheap or free through mid-range) or luxury (premium), relative to the area.",
             },
             times: {
               type: "array",
@@ -371,57 +653,63 @@ const SUBMIT_TOOL: Anthropic.Beta.BetaTool = {
   },
 };
 
-const SYSTEM_PROMPT = `You find real, currently operating venues for Landed, an app that builds a night or day out.
+const SYSTEM_PROMPT = `You choose venues for Landed, an app that builds a night or day out around a pin on a map. Each request is for ONE category.
 
-For the requested location and vibe, find strong candidates in EACH of these categories, for all three budget tiers and all three timeframes at once — the app lets the person switch budget and timeframe instantly, so this one search has to serve them all.
-
-Budget tiers (label every venue with one, relative to the area):
+Choose ${PER_TIER} venues for each budget tier (${PER_TIER * BUDGET_KEYS.length} in total) where the area has them — the person swaps between options within their chosen tier:
 - modest: everyday spending — include cheap and free options as well as mid-range ones (roughly half and half where the area has them)
 - luxury: premium, special-occasion options
-Aim for ${PER_TIER} venues per tier in every category (about ${PER_TIER * BUDGET_KEYS.length} per category) where the area has them — the person swaps between options within their chosen tier, so each tier needs its own choices.
 
-Timeframes:
+Timeframes ("times" — list every one a venue suits):
 - now: open and worth going to at the current local time
 - tonight: this evening, local time
 - tomorrow: tomorrow, day or evening
-
-Categories:
-${CATEGORY_ORDER.map((c) => `- ${c} (${CATEGORY_LABELS[c]}): price_gbp is ${CATEGORY_UNITS[c]}`).join("\n")}
+Pick venues so that each tier has options for tonight and for tomorrow.
 
 Guidance:
-- Stay local to the exact coordinates — the person has put a pin on the map and wants what's closest and most convenient to that spot, not the best of the wider town or city. Search the named neighbourhood and its streets, not the whole town.
-  - Aim for walking distance: within about 1 km of the pin.
-  - Only if a category has nothing good that close, widen to 3 km. Never suggest anything further than ${MAX_DISTANCE_KM.restaurant} km for restaurants, bars and parking, ${MAX_DISTANCE_KM.live} km for live and attractions, or ${MAX_DISTANCE_KM.stay} km for stays — anything beyond is discarded.
-  - Among good options, closer is better.
-- "times" lists every timeframe a venue suits. Most places suit several; pick venues so that each tier still has a few options for each timeframe — e.g. a daytime café for now, a late bar for tonight.
-- Keep "highlight" short; with this many venues, brevity matters.
-- "live" means live music, comedy, theatre, or similar. Favour venues with something actually on in a timeframe, and only list the timeframes the show is on. Put the act or show in "highlight", with the day if it's only on one ("Tomorrow: jazz trio").
-- Only include places that are currently operating. Skip anything permanently closed.
-- "name" must be the venue's business name exactly as Google Maps would list it, since each one is verified against Google Places.
-- price_gbp is your best current estimate from what you find, in British pounds (convert local prices if needed). The app labels it as an estimate.
-- When you're done, call submit_venues once with everything. Don't write a prose answer.`;
+- Choose from the Google Maps list in the request wherever it fits, using names exactly as written — those places are real, open and near the pin. Closer is better among good options. Only add a place that isn't listed if the list has nothing suitable.
+- Only choose venues that suit the requested vibe.
+- price_gbp is your best current estimate, in British pounds (convert local prices if needed); the list's £–££££ is Google's price level. The app labels prices as estimates.
+- Keep "highlight" short.
+- When you've chosen, call submit_venues once. Don't write a prose answer.`;
 
+const LIVE_GUIDANCE = `This category is "live": live music, comedy, theatre or similar. Use web search to find what's actually on tonight and tomorrow at these venues (and any nearby ones the list missed). Favour venues with something on, list only the timeframes a show is on, and put the act or show in "highlight", with the day if it's only on one ("Tomorrow: jazz trio").`;
 
-async function findCandidatesWithAI(
+async function findCandidatesForCategory(
+  cat: CategoryKey,
   input: PlanRequest,
   apiKey: string,
-  warnings: string[],
-  nearbyLists: NearbyLists
+  list: NearbyPlace[],
+  warnings: string[]
 ): Promise<Candidate[]> {
-  const client = new Anthropic({ apiKey, timeout: 180_000, maxRetries: 1 });
+  const client = new Anthropic({ apiKey, timeout: 120_000, maxRetries: 1 });
   const vibeLabel = VIBE_OPTIONS.find((o) => o.key === input.vibe)!.label;
+  const isLive = cat === "live";
   const messages: Anthropic.Beta.BetaMessageParam[] = [
     {
       role: "user",
       content:
-        `Pin on the map: ${input.lat.toFixed(5)}, ${input.lng.toFixed(5)} — in ${input.location}. Find places closest to this exact spot.\n` +
+        `Category: ${cat} (${CATEGORY_LABELS[cat]}) — price_gbp is ${CATEGORY_UNITS[cat]}.\n` +
+        `Pin on the map: ${input.lat.toFixed(5)}, ${input.lng.toFixed(5)} — in ${input.location}.\n` +
         // The pin's time zone isn't known here, so give the exact UTC
         // instant and let the model work out local time for the location.
         `Current time: ${new Date().toISOString()} UTC — use the pin's local time for now / tonight / tomorrow.\n` +
-        `Vibe: ${vibeLabel} (${input.vibe}) — only choose venues that suit this vibe.` +
-        nearbyListsPrompt(nearbyLists),
+        `Vibe: ${vibeLabel} (${input.vibe}).\n\n` +
+        (list.length
+          ? `Near the pin, from Google Maps (closest first; ★rating (reviews); £–££££ price level):\n` +
+            list.map((p) => `- ${describeNearby(p)}`).join("\n")
+          : `Google Maps had nothing listed for this category near the pin${isLive ? "" : " — suggest only places you're confident exist within walking distance"}.`) +
+        (isLive ? `\n\n${LIVE_GUIDANCE}` : ""),
     },
   ];
+  const tools: Anthropic.Beta.BetaToolUnion[] = isLive
+    ? [
+        // Only "live" needs the web (what's on); every other category is
+        // chosen from its Google list. No user_location: web search rejects
+        // some countries in it (e.g. "IE" → 400); the prompt has coordinates.
+        { type: "web_search_20260209", name: "web_search", max_uses: 2 },
+        SUBMIT_TOOL,
+      ]
+    : [SUBMIT_TOOL];
 
   let nudged = false;
   // Server-side web search can pause long turns (pause_turn); resume a few
@@ -431,29 +719,15 @@ async function findCandidatesWithAI(
     try {
       response = await client.beta.messages.create({
         model: MODEL,
-        max_tokens: 16000,
+        max_tokens: 8000,
         // Server-side refusal fallback: if a safety classifier declines,
         // the API retries on a fallback model inside the same call.
         betas: ["server-side-fallback-2026-07-01"],
         fallbacks: "default",
         thinking: { type: "adaptive" },
-        // Measured 2026-09-24: low effort + 5 searches matched medium + 8
-        // on venue quality and verification rate (27-29 of 30 kept) at
-        // about half the input tokens, ~47s vs ~55s.
         output_config: { effort: "low" },
         system: SYSTEM_PROMPT,
-        tools: [
-          {
-            type: "web_search_20260209",
-            name: "web_search",
-            // The Google lists cover "what's nearby"; web search is only
-            // for what's on, vibe and prices, so fewer are needed.
-            max_uses: 3,
-            // No user_location: web search rejects some countries in it
-            // (e.g. "IE" → 400), and the prompt already has coordinates.
-          },
-          SUBMIT_TOOL,
-        ],
+        tools,
         messages,
       });
     } catch (err) {
@@ -469,21 +743,21 @@ async function findCandidatesWithAI(
       } else {
         warnings.push("Couldn't reach the Anthropic API.");
       }
-      console.error("[api/plan] Anthropic request failed", err);
+      console.error(`[api/plan] Anthropic request failed (${cat})`, err);
       return [];
     }
 
     const submit = response.content.find(
       (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use" && b.name === SUBMIT_TOOL.name
     );
-    if (submit) return sanitizeCandidates(submit.input);
+    if (submit) return sanitizeCandidates(submit.input, cat);
 
     if (response.stop_reason === "refusal") {
-      warnings.push("AI search declined the request.");
+      warnings.push(`AI search declined the ${CATEGORY_LABELS[cat]} request.`);
       return [];
     }
     if (response.stop_reason === "max_tokens") {
-      warnings.push("AI search ran out of output tokens before submitting results.");
+      warnings.push(`AI search ran out of output tokens for ${CATEGORY_LABELS[cat]}.`);
       return [];
     }
     messages.push({ role: "assistant", content: response.content });
@@ -492,29 +766,26 @@ async function findCandidatesWithAI(
     // Finished without calling submit_venues — ask once, then give up.
     if (nudged) break;
     nudged = true;
-    messages.push({ role: "user", content: "Please call submit_venues now with the venues you found." });
+    messages.push({ role: "user", content: "Please call submit_venues now with the venues you chose." });
   }
-  warnings.push("AI search finished without returning any venues.");
   return [];
 }
 
 // strict: true guarantees the schema, but eager parsing / future model
 // changes shouldn't be able to crash the route — re-check the shape.
-function sanitizeCandidates(input: unknown): Candidate[] {
+function sanitizeCandidates(input: unknown, cat: CategoryKey): Candidate[] {
   const venues = (input as { venues?: unknown })?.venues;
   if (!Array.isArray(venues)) return [];
   const out: Candidate[] = [];
   for (const v of venues) {
     if (!v || typeof v !== "object") continue;
-    const { category, name, price_gbp, times, budget, highlight } = v as Record<string, unknown>;
-    if (!CATEGORY_ORDER.includes(category as CategoryKey)) continue;
+    const { name, price_gbp, times, budget, highlight } = v as Record<string, unknown>;
     if (typeof name !== "string" || !name.trim()) continue;
     out.push({
-      category: category as CategoryKey,
+      category: cat,
       name: name.trim().slice(0, 120),
       price_gbp: typeof price_gbp === "number" && isFinite(price_gbp) && price_gbp >= 0 ? price_gbp : NaN,
-      // No timeframes given → treat it as suiting all three ("now" is
-      // still checked against Google's live opening hours).
+      // No timeframes given → treat it as suiting all three.
       times: Array.isArray(times) && times.some((t) => TIME_KEYS.includes(t as TimeKey))
         ? (times.filter((t) => TIME_KEYS.includes(t as TimeKey)) as TimeKey[])
         : [...TIME_KEYS],
@@ -525,7 +796,7 @@ function sanitizeCandidates(input: unknown): Candidate[] {
   return out;
 }
 
-// ── Step 2: Google Places verification ──────────────────────────────────
+// ── Google Places: lookups, nearby lists, verification ──────────────────
 
 type Place = {
   id: string;
@@ -540,6 +811,8 @@ type Place = {
   location?: { latitude: number; longitude: number };
   businessStatus?: string;
   currentOpeningHours?: { openNow?: boolean };
+  regularOpeningHours?: { periods?: OpeningPeriod[] };
+  utcOffsetMinutes?: number;
   types?: string[];
 };
 type Verified = { candidate: Candidate; place: Place; distanceKm: number };
@@ -554,6 +827,9 @@ const PLACES_FIELDS = [
   "places.location",
   "places.businessStatus",
   "places.currentOpeningHours.openNow",
+  // For working out "now" at serve time, even from cached results.
+  "places.regularOpeningHours.periods",
+  "places.utcOffsetMinutes",
   "places.types",
 ].join(",");
 
@@ -605,11 +881,10 @@ class PlacesError extends Error {
 
 // ── Nearby places per category (Google Places Nearby Search) ────────────
 //
-// Before the AI search, Google lists what's actually around the pin in
-// each category. The AI chooses from these lists (so it isn't limited to
-// what a few web searches turn up), and anything it picks from a list is
-// already verified — no separate lookup. That makes searches both broader
-// and cheaper: ~8 list requests replace ~30 one-by-one verifications.
+// Google lists what's actually around the pin in each category. These are
+// the instant draft plan, and each category's AI call chooses from its
+// list (so it isn't limited to what a web search turns up); anything
+// picked from a list is already verified — no separate lookup.
 //
 // Google returns at most 20 places per request, so restaurants and bars
 // (plentiful in town centres) get two: the 20 most popular and the 20
@@ -713,7 +988,7 @@ async function listCategory(cat: CategoryKey, input: PlanRequest, apiKey: string
 }
 
 // All categories in parallel (well under a second). A category whose list
-// fails just has no list — the AI finds that category itself, as before.
+// fails just has no list — its AI call suggests places on its own.
 async function findNearbyLists(input: PlanRequest, apiKey: string, warnings: string[]): Promise<NearbyLists> {
   const lists: NearbyLists = {};
   const failed: string[] = [];
@@ -745,20 +1020,6 @@ function describeNearby({ place, distanceKm }: NearbyPlace): string {
   const rating = typeof place.rating === "number" ? ` ★${place.rating.toFixed(1)} (${place.userRatingCount ?? 0})` : "";
   const price = place.priceLevel && PRICE_LEVEL_LABEL[place.priceLevel] ? ` ${PRICE_LEVEL_LABEL[place.priceLevel]}` : "";
   return `${place.displayName?.text} — ${distanceKm.toFixed(1)} km — ${kind}${rating}${price}`;
-}
-
-function nearbyListsPrompt(lists: NearbyLists): string {
-  const sections = CATEGORY_ORDER.filter((c) => lists[c]?.length).map(
-    (c) => `${c} (${CATEGORY_LABELS[c]}):\n` + lists[c]!.map((p) => `- ${describeNearby(p)}`).join("\n")
-  );
-  if (sections.length === 0) return "";
-  return (
-    `\n\nWhat's actually near the pin, from Google Maps (closest first; ★rating (reviews); £–££££ price level):\n\n` +
-    sections.join("\n\n") +
-    `\n\nChoose venues from these lists wherever they fit, using the names exactly as written — they're real, open, and nearby. ` +
-    `Use web search for what the lists can't tell you: what's on (especially live), what suits the vibe, and prices. ` +
-    `Only add a place that isn't listed if a category has nothing suitable.`
-  );
 }
 
 // A venue the AI picked from a list: the same Google place, no lookup
@@ -840,18 +1101,20 @@ function cleanAddress(address: string, name: string): string {
   return address.startsWith(prefix) ? address.slice(prefix.length) : address;
 }
 
-// ── Step 3: Assemble into the frontend's CategoryOption shape ───────────
 
-function rankAndAssemble(verified: Verified[], input: PlanRequest): LiveOptions {
-  const options: LiveOptions = {};
+// ── Assemble into the frontend's CategoryOption shape ───────────────────
+
+function hoursOf(place: Place): OpeningHours | null {
+  const periods = place.regularOpeningHours?.periods;
+  return periods?.length ? { periods, utcOffsetMinutes: place.utcOffsetMinutes } : null;
+}
+
+function assemble(verified: Verified[], input: PlanRequest): PlanData {
+  const data = emptyPlan();
   const seen = new Set<string>();
   for (const { candidate, place, distanceKm } of verified) {
     const cat = candidate.category;
     const template = CATEGORY_OPTIONS[cat][0];
-    // Every search is for one vibe, and only venues suiting it are chosen —
-    // so each is tagged with just that vibe (the AI doesn't spend time
-    // tagging vibes nobody asked for).
-    const vibes = [input.vibe];
     const meta = [`${(distanceKm * 0.621371).toFixed(1)} mi`];
     if (typeof place.rating === "number") meta.push(`★ ${place.rating.toFixed(1)} Reviews`);
     if (candidate.highlight) meta.push(candidate.highlight);
@@ -860,41 +1123,38 @@ function rankAndAssemble(verified: Verified[], input: PlanRequest): LiveOptions 
       tag: template.tag,
       tagBg: template.tagBg,
       title: place.displayName!.text,
-      price: formatPrice(candidate.price_gbp),
-      // Prices are the AI's estimate, not a quote — say so.
-      unit: candidate.price_gbp === 0 ? "" : `${CATEGORY_UNITS[cat]} (est.)`,
+      price: candidate.priceLabel ?? formatPrice(candidate.price_gbp),
+      // Prices are the AI's estimate, not a quote — say so. (Google's price
+      // band in the draft needs no unit.)
+      unit: candidate.priceLabel || candidate.price_gbp === 0 || !isFinite(candidate.price_gbp) ? "" : `${CATEGORY_UNITS[cat]} (est.)`,
       address: cleanAddress(place.shortFormattedAddress || place.formattedAddress || "", place.displayName!.text),
       phone: place.internationalPhoneNumber || "",
-      vibes,
+      // Every search is for one vibe, and only venues suiting it are chosen.
+      vibes: [input.vibe],
       meta,
       budget: candidate.budget,
     };
+    data.hours[option.id] = hoursOf(place);
 
-    for (const time of candidate.times) {
-      const key = `${time}|${cat}|${place.id}`;
-      if (seen.has(key)) continue;
+    for (const time of ["tonight", "tomorrow"] as const) {
+      const key = `${time}|${option.id}`;
+      if (!candidate.times.includes(time) || seen.has(key)) continue;
       seen.add(key);
-      // "Now" means open now, by Google's live opening hours — except a
-      // stay or car park, which you can head to regardless.
-      if (time === "now" && place.currentOpeningHours?.openNow === false && cat !== "stay" && cat !== "parking") continue;
-      ((options[time] ??= {})[cat] ??= []).push(option);
+      (data[time][cat] ??= []).push(option);
+    }
+    // "Now" is decided at serve time from opening hours. A live venue only
+    // counts if its show is on now or tonight, not just tomorrow.
+    const poolKey = `pool|${option.id}`;
+    const liveNotYet = cat === "live" && !candidate.times.some((t) => t === "now" || t === "tonight");
+    if (!seen.has(poolKey) && !liveNotYet) {
+      seen.add(poolKey);
+      (data.pool[cat] ??= []).push(option);
     }
   }
-  // Closest first (matching how the static catalog reads in the swap
-  // sheet), keeping the nearest OPTIONS_PER_TIER in each budget tier.
-  for (const byCat of Object.values(options)) {
-    if (!byCat) continue;
-    for (const cat of Object.keys(byCat) as CategoryKey[]) {
-      const sorted = byCat[cat]!.sort((a, b) => parseFloat(a.meta[0]) - parseFloat(b.meta[0]));
-      const perTier = new Map<string, number>();
-      byCat[cat] = sorted.filter((o) => {
-        const n = perTier.get(o.budget ?? "modest") ?? 0;
-        perTier.set(o.budget ?? "modest", n + 1);
-        return n < OPTIONS_PER_TIER;
-      });
-    }
+  for (const time of ["tonight", "tomorrow"] as const) {
+    for (const cat of Object.keys(data[time]) as CategoryKey[]) data[time][cat] = trimTiers(data[time][cat]!);
   }
-  return options;
+  return data;
 }
 
 function formatPrice(gbp: number): string {

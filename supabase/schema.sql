@@ -101,3 +101,20 @@ create policy "Plan searches are insertable by their owner"
 -- per category), so reopening a draft restores its swaps and timeframes
 -- without searching again. Null on older plans.
 alter table public.bookings add column if not exists live_results jsonb;
+
+-- ── Plan cache: shared live-search results ────────────────────────────
+-- Finished /api/plan searches, per area (~1 km), vibe and local date, so
+-- the next search of that area is instant for everyone. Written and read
+-- only by the server with the service-role key (SUPABASE_SERVICE_ROLE_KEY
+-- in Vercel). RLS is on with NO policies, so the public anon key can't
+-- read or write it — nobody can plant fake venues in other people's plans.
+create table if not exists public.plan_cache (
+  key         text primary key,
+  data        jsonb not null,
+  created_at  timestamptz not null default now(),
+  expires_at  timestamptz not null
+);
+
+create index if not exists plan_cache_expires_idx on public.plan_cache (expires_at);
+
+alter table public.plan_cache enable row level security;
