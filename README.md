@@ -89,9 +89,10 @@ In https://console.cloud.google.com, enable **Maps JavaScript API** and
   (Credentials → the key → Website restrictions).
 - `GOOGLE_PLACES_API_KEY` — server-only, used by `/api/plan` to verify
   venues. Restrict it to the Places API.
-- `NEXT_PUBLIC_GOOGLE_MAP_ID` (optional) — a Map ID from **Map
-  Management**. Without it the map uses Google's `DEMO_MAP_ID`, which is
-  fine for development but should be replaced before launch.
+- The map's simplified look (town and city names only) is set in code —
+  `MAP_STYLES` in `app/components/LiveMap.tsx` — so no Map ID is needed.
+  (Code styles only apply to maps without a Map ID; that's also why the
+  pin is Google's classic Marker.)
 
 ### Anthropic (live venue search)
 

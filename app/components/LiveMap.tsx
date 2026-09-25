@@ -23,12 +23,27 @@ import type { LatLng, PlanLocation } from "../lib/geo";
 // loads or if it can't load (no key, bad key, blocked script).
 //
 // Uses NEXT_PUBLIC_GOOGLE_MAPS_API_KEY — a browser key by design, so
-// restrict it to your domain in Google Cloud Console. NEXT_PUBLIC_GOOGLE_MAP_ID
-// is optional (a Map ID from Cloud Console > Map Management); without it,
-// Google's DEMO_MAP_ID is used, which is fine for development.
+// restrict it to your domain in Google Cloud Console.
 
 const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
-const MAP_ID = process.env.NEXT_PUBLIC_GOOGLE_MAP_ID || "DEMO_MAP_ID";
+
+// A simpler map: town and city names only — no businesses, landmarks,
+// transit, road names or road icons — with roads drawn simplified.
+// Styles set in code only apply to maps *without* a Map ID (a Map ID's
+// look comes from Cloud Console instead), which is why there's no Map ID
+// and why the pin is the classic google.maps.Marker: the newer
+// AdvancedMarkerElement requires a Map ID. (Google has deprecated the
+// classic Marker but it's fully supported, with 12 months' notice before
+// any removal.)
+const MAP_STYLES: google.maps.MapTypeStyle[] = [
+  { elementType: "labels", stylers: [{ visibility: "off" }] },
+  { featureType: "administrative.locality", elementType: "labels", stylers: [{ visibility: "on" }] },
+  { featureType: "poi", stylers: [{ visibility: "off" }] },
+  { featureType: "transit", stylers: [{ visibility: "off" }] },
+  { featureType: "road", elementType: "geometry", stylers: [{ visibility: "simplified" }] },
+  { featureType: "administrative.neighborhood", stylers: [{ visibility: "off" }] },
+  { featureType: "administrative.land_parcel", stylers: [{ visibility: "off" }] },
+];
 
 // Before any location is known: the UK and Ireland, zoomed out.
 const WIDE_VIEW = { center: { lat: 54.3, lng: -4.5 }, zoom: 5 };
@@ -152,7 +167,7 @@ export function LiveMap({
   const mapRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<google.maps.Map | null>(null);
-  const markerRef = useRef<google.maps.marker.AdvancedMarkerElement | null>(null);
+  const markerRef = useRef<google.maps.Marker | null>(null);
   const onPlaceSelectRef = useRef(onPlaceSelect);
   onPlaceSelectRef.current = onPlaceSelect;
   const locationRef = useRef(location);
@@ -196,8 +211,8 @@ export function LiveMap({
     map.setCenter({ lat: location.lat, lng: location.lng });
     map.setZoom(14);
     if (markerRef.current) {
-      markerRef.current.position = { lat: location.lat, lng: location.lng };
-      markerRef.current.map = map;
+      markerRef.current.setPosition({ lat: location.lat, lng: location.lng });
+      markerRef.current.setMap(map);
     }
   }, [location]);
 
@@ -219,7 +234,7 @@ export function LiveMap({
     (async () => {
       try {
         await loadGoogleMaps();
-        const [{ Map }, { AdvancedMarkerElement }, { PlaceAutocompleteElement, Place }] = await Promise.all([
+        const [{ Map }, { Marker }, { PlaceAutocompleteElement, Place }] = await Promise.all([
           google.maps.importLibrary("maps") as Promise<google.maps.MapsLibrary>,
           google.maps.importLibrary("marker") as Promise<google.maps.MarkerLibrary>,
           google.maps.importLibrary("places") as Promise<google.maps.PlacesLibrary>,
@@ -233,13 +248,13 @@ export function LiveMap({
         const map = new Map(mapRef.current, {
           center: start ? { lat: start.lat, lng: start.lng } : WIDE_VIEW.center,
           zoom: start ? 14 : WIDE_VIEW.zoom,
-          mapId: MAP_ID,
+          styles: MAP_STYLES,
           disableDefaultUI: true,
           clickableIcons: false,
           gestureHandling: "cooperative",
         });
         mapInstanceRef.current = map;
-        const marker = new AdvancedMarkerElement({ map: null });
+        const marker = new Marker({ map: null, clickable: false });
         markerRef.current = marker;
 
         // The search box is recreated (rather than cleared) on reset — the
@@ -265,8 +280,8 @@ export function LiveMap({
               map.setCenter(place.location);
               map.setZoom(16);
             }
-            marker.position = place.location ?? null;
-            marker.map = place.location ? map : null;
+            marker.setPosition(place.location ?? null);
+            marker.setMap(place.location ? map : null);
             if (place.location) {
               const point = { lat: place.location.lat(), lng: place.location.lng() };
               onPlaceSelectRef.current?.(describePlace(point, place.addressComponents, place.displayName || ""), "search");
@@ -282,8 +297,8 @@ export function LiveMap({
         const centreOnDevice = async (point: LatLng, source: "device-button" | "device-auto") => {
           map.setCenter(point);
           map.setZoom(14);
-          marker.position = point;
-          marker.map = map;
+          marker.setPosition(point);
+          marker.setMap(map);
           if (autocomplete) autocomplete.locationBias = { center: point, radius: 20000 };
           // On opening the app (or after +), just show where they are.
           // The plan — and its search, which costs money — only starts
@@ -325,7 +340,7 @@ export function LiveMap({
         };
         setMapReady(true);
         resetRef.current = () => {
-          marker.map = null;
+          marker.setMap(null);
           autocomplete?.remove();
           mountAutocomplete();
           map.setCenter(WIDE_VIEW.center);
