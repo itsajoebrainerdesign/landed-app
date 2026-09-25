@@ -37,6 +37,7 @@ export type SavedItem = {
   lat?: number;
   lng?: number;
   photos?: VenuePhoto[];
+  website?: string;
 };
 export type SavedBooking = {
   id: string;

@@ -396,7 +396,7 @@ function localDate(lng: number): string {
 }
 
 function cacheKey(input: PlanRequest): string {
-  return `v3|${input.lat.toFixed(2)},${input.lng.toFixed(2)}|${input.vibe}|${localDate(input.lng)}`;
+  return `v4|${input.lat.toFixed(2)},${input.lng.toFixed(2)}|${input.vibe}|${localDate(input.lng)}`;
 }
 
 function readMemoryCache(key: string): PlanData | null {
@@ -873,6 +873,7 @@ type Place = {
   regularOpeningHours?: { periods?: OpeningPeriod[] };
   utcOffsetMinutes?: number;
   types?: string[];
+  websiteUri?: string;
   photos?: { name: string; authorAttributions?: { displayName?: string }[] }[];
 };
 type Verified = { candidate: Candidate; place: Place; distanceKm: number };
@@ -894,6 +895,7 @@ const PLACES_FIELDS = [
   // Same billing tier as the fields above, so no extra cost per search.
   // (Each photo shown is billed separately — see app/api/photo.)
   "places.photos",
+  "places.websiteUri",
 ].join(",");
 
 // Categories with a clear Places type must match it — otherwise a "car
@@ -1220,6 +1222,7 @@ function assemble(verified: Verified[], input: PlanRequest): PlanData {
       lat: place.location?.latitude,
       lng: place.location?.longitude,
       photos: photosOf(place),
+      website: place.websiteUri,
     };
     data.hours[option.id] = hoursOf(place);
 

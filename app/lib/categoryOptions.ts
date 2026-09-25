@@ -37,6 +37,9 @@ export type CategoryOption = {
   // stay.
   lat?: number;
   lng?: number;
+  // The venue's own website, from Google — booking and ticket links go
+  // here, or to a Google search when it's missing.
+  website?: string;
   // Photos from Google Places (one per venue — each one shown is billed).
   photos?: VenuePhoto[];
 };

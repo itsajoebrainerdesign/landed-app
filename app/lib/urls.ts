@@ -8,11 +8,31 @@ const withArea = (name: string, area?: string) => (area ? `${name} ${area}` : na
 export function mapsUrl(name: string, area?: string) {
   return "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(withArea(name, area));
 }
-export function ticketSearchUrl(name: string, area?: string) {
-  return "https://www.google.com/search?q=" + encodeURIComponent(withArea(name, area) + " tickets");
+// The venue's own website (from Google Places) when it has one, otherwise
+// a Google search for booking / tickets.
+export function ticketSearchUrl(name: string, area?: string, website?: string) {
+  return safeWebsite(website) ?? "https://www.google.com/search?q=" + encodeURIComponent(withArea(name, area) + " tickets");
 }
-export function bookingSearchUrl(name: string, area?: string) {
-  return "https://www.google.com/search?q=" + encodeURIComponent(withArea(name, area) + " booking");
+export function bookingSearchUrl(name: string, area?: string, website?: string) {
+  return safeWebsite(website) ?? "https://www.google.com/search?q=" + encodeURIComponent(withArea(name, area) + " booking");
+}
+
+// Some venues list a platform's homepage (e.g. just "instagram.com")
+// rather than their page on it — useless as a link.
+const PLATFORM_HOSTS = ["instagram.com", "facebook.com", "tiktok.com", "twitter.com", "x.com", "linktr.ee", "google.com", "linkedin.com"];
+
+// Only plain web links — never javascript: or other schemes.
+function safeWebsite(url?: string): string | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+    const host = u.hostname.replace(/^(www|m)\./, "");
+    if (PLATFORM_HOSTS.includes(host) && u.pathname.replace(/\/+$/, "") === "") return null;
+    return u.href;
+  } catch {
+    return null;
+  }
 }
 
 // ── Affiliate booking links ──────────────────────────────────────────────
