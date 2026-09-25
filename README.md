@@ -28,18 +28,18 @@ drink, see something live, and park — around a place and a vibe.
   confirmed plans are stored per user. Signed-out visitors can still make
   and save plans on their device; those move into their account the first
   time they sign in.
-- **Affiliate booking links**: stays open Booking.com centred on the hotel
-  with the dates filled in (Tonight/Now → tonight, Tomorrow → tomorrow
-  night, 2 adults). Set `NEXT_PUBLIC_BOOKING_AFFILIATE_ID` (your Booking.com
-  Affiliate Partner ID) to earn commission; the booking sheet then shows a
-  short affiliate disclosure. Restaurants, bars, attractions, live and
-  parking link to the venue (its website, a ticket search, directions);
-  with a partner programme set up (`app/lib/affiliates.ts`), that button
-  books through the partner, tracked — but only for a venue with a
-  confirmed page there (`partnerUrl`); otherwise it stays the venue's
-  own website. OpenTable (restaurants and bars), Ticketmaster (live),
-  GetYourGuide (attractions), JustPark (parking).
-  See `.env.local.example` for the IDs each one needs.
+- **Affiliate booking links** (`app/lib/affiliates.ts`): results are
+  chosen for the person; affiliates never affect which venues are picked.
+  Each venue's main button goes to its own website (tickets search for
+  attractions/live without one, directions for parking) — unless the
+  venue has a confirmed page on a partner (`partnerUrl`) and that
+  partner's programme is set up, in which case it books there, tracked:
+  Booking.com (stays, with dates and party size filled in), OpenTable
+  (restaurants, bars), Ticketmaster (live), GetYourGuide (attractions),
+  JustPark (parking). Never a partner-site search. A short commission
+  disclosure shows whenever a tracked link does. IDs: `.env.local.example`.
+  Checking which venues each partner lists isn't built yet — until it
+  is, every button goes to the venue's own website.
 - **Not built yet**: payments (Stripe — the Account page's payment section
   is a placeholder), partner booking APIs (the "Connect" buttons are
   disabled), and plans shared between users (Explore says "No plans in

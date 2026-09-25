@@ -210,7 +210,7 @@ function ViewBookingSheet({
           {booking?.planSummary}
         </span>
         <div style={{ overflowY: "auto", padding: "0 20px 32px", display: "flex", flexDirection: "column", gap: 16, flex: "1 1 auto", minHeight: 0, ...SHEET_SCROLL_STYLE }}>
-          <PlanSheetItems items={items} area={booking?.location?.name} areaPos={booking?.location} time={booking?.time} vibe={booking?.vibe} />
+          <PlanSheetItems items={items} area={booking?.location?.name} time={booking?.time} vibe={booking?.vibe} />
         </div>
       </div>
     </div>

@@ -1,7 +1,7 @@
 import { PhoneIcon } from "./icons";
 import { SaveInMapsLink } from "./SaveInMapsLink";
 import { CTA_GRADIENT } from "../lib/constants";
-import { planItemLink, AFFILIATE_LINKS_ON } from "../lib/urls";
+import { planItemLink } from "../lib/urls";
 import { telHref } from "../lib/format";
 import { partnerLink } from "../lib/affiliates";
 
@@ -27,13 +27,9 @@ export function PlanSheetItems({
   area,
   time,
   vibe,
-  areaPos,
 }: {
   items: [string, SheetItem][];
   area?: string;
-  // The plan's location — where a stay link centres when the stay itself
-  // has no saved position (older plans).
-  areaPos?: { lat?: number; lng?: number };
   time?: string;
   vibe?: string;
 }) {
@@ -43,7 +39,7 @@ export function PlanSheetItems({
         // Through the venue's confirmed partner page when there is one
         // (and that programme is set up); otherwise the venue's website /
         // ticket search / directions.
-        const link = partnerLink(cat, item) ?? planItemLink(cat, item, area, time, vibe, areaPos);
+        const link = partnerLink(cat, item, { time, vibe }) ?? planItemLink(cat, item, area);
         return (
           <div key={cat} style={{ borderRadius: 20, background: "#F7F5EE", padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
             <span style={{ alignSelf: "flex-start", borderRadius: 999, padding: "6px 14px", fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", background: item.tagBg, color: "#111111" }}>
@@ -82,7 +78,7 @@ export function PlanSheetItems({
       })}
       {/* Affiliate disclosure (UK advertising rules), whenever a tracked
           link is showing: Booking.com for stays, or a partner link. */}
-      {items.some(([cat, item]) => (cat === "stay" && AFFILIATE_LINKS_ON) || (!item.hasApiBooking && partnerLink(cat, item))) && (
+      {items.some(([cat, item]) => !item.hasApiBooking && partnerLink(cat, item, { time, vibe })) && (
         <span style={{ fontSize: 11, color: "#767766" }}>We may earn a commission if you book through some of these links.</span>
       )}
     </>
