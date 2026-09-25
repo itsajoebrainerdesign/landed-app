@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CTA_GRADIENT } from "../lib/constants";
 import type { LatLng, PlanLocation } from "../lib/geo";
 
 // The intake screen's map: a real Google Map with a Places Autocomplete
@@ -9,11 +8,10 @@ import type { LatLng, PlanLocation } from "../lib/geo";
 //
 // On load it asks for the device's location (the browser shows its own
 // "allow location?" prompt). If allowed, the map centres there with a
-// marker — but that's all: no place is chosen and nothing is searched
-// until the person taps "Use my location", or picks a search result and
-// then taps "Use selected location" (picking a result only moves the map,
-// since every search costs one of their limited searches). Either reports
-// the place via onPlaceSelect and unlocks the rest of the page.
+// pin. The pin can be moved by picking a search result, tapping "Use my
+// location", or tapping anywhere on the map — each reports it through
+// onPinChange, and nothing is chosen or searched until the page's Confirm
+// button is tapped (every search costs one of their limited searches).
 // If refused or unavailable (no permission, no GPS, or a non-HTTPS page —
 // browsers only share location over HTTPS or localhost), the map stays on
 // a wide UK & Ireland view.
@@ -144,21 +142,26 @@ function loadGoogleMaps(): Promise<void> {
   return mapsPromise;
 }
 
+// Where the pin is, waiting to be confirmed. `describe` names the spot —
+// only called on confirm, since naming a tapped or device point costs a
+// Places request.
+export type PendingPin = { point: LatLng; describe: () => Promise<PlanLocation> };
+
 export function LiveMap({
   className,
   style,
   location,
-  onPlaceSelect,
+  onPinChange,
   resetSignal,
   autoLocateAllowed,
 }: {
   className?: string;
   style?: React.CSSProperties;
   location?: PlanLocation;
-  // Called when a place is chosen: "Use selected location" after picking
-  // a search result, or the "Use my location" button. (The automatic location on opening only moves the
-  // map — it doesn't choose a place, so no search runs by itself.)
-  onPlaceSelect?: (place: PlanLocation, source: "search" | "device-button") => void;
+  // Called whenever the pin moves (search result, device location, or a
+  // tap on the map), or with null when it's cleared. Nothing is chosen
+  // until the caller confirms it.
+  onPinChange?: (pin: PendingPin | null) => void;
   // Changing this clears the search box and marker and goes back to the
   // device's location (used when + starts a new enquiry).
   resetSignal?: number;
@@ -171,8 +174,8 @@ export function LiveMap({
   const searchRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<google.maps.Map | null>(null);
   const markerRef = useRef<google.maps.Marker | null>(null);
-  const onPlaceSelectRef = useRef(onPlaceSelect);
-  onPlaceSelectRef.current = onPlaceSelect;
+  const onPinChangeRef = useRef(onPinChange);
+  onPinChangeRef.current = onPinChange;
   const locationRef = useRef(location);
   locationRef.current = location;
   const autoLocateAllowedRef = useRef(autoLocateAllowed);
@@ -184,19 +187,9 @@ export function LiveMap({
   const [mapReady, setMapReady] = useState(false);
   const [locating, setLocating] = useState(false);
   const [locateNote, setLocateNote] = useState<string | null>(null);
-  // The search result picked in the box, shown on the map but not used
-  // until "Use selected location" is tapped.
-  const [pending, setPending] = useState<PlanLocation | null>(null);
-
-  function confirmSelected() {
-    if (!pending) return;
-    onPlaceSelectRef.current?.(pending, "search");
-    setPending(null);
-  }
 
   async function handleLocate() {
     if (!locateRef.current || locating) return;
-    setPending(null);
     setLocating(true);
     setLocateNote(null);
     const ok = await locateRef.current();
@@ -293,31 +286,27 @@ export function LiveMap({
               map.setCenter(place.location);
               map.setZoom(16);
             }
-            marker.setPosition(place.location ?? null);
-            marker.setMap(place.location ? map : null);
             if (place.location && !cancelled) {
               const point = { lat: place.location.lat(), lng: place.location.lng() };
-              setPending(describePlace(point, place.addressComponents, place.displayName || ""));
+              const described = describePlace(point, place.addressComponents, place.displayName || "");
+              setPin(point, async () => described);
             }
           } catch (err) {
             console.warn("[Landed] couldn't load the selected place", err);
           }
         };
 
-        // Centre on the device, and name the spot from the nearest place's
-        // address (reverse geocoding would need the separate Geocoding
-        // API; this uses Places, which the key already has).
-        const centreOnDevice = async (point: LatLng, source: "device-button" | "device-auto") => {
-          map.setCenter(point);
-          map.setZoom(14);
+        // Puts the pin at a point and reports it, waiting for confirm.
+        const setPin = (point: LatLng, describe: () => Promise<PlanLocation>) => {
           marker.setPosition(point);
           marker.setMap(map);
-          if (autocomplete) autocomplete.locationBias = { center: point, radius: 20000 };
-          // On opening the app (or after +), just show where they are.
-          // The plan — and its search, which costs money — only starts
-          // when they tap "Use my location" or search a place.
-          if (source === "device-auto") return;
-          let described: PlanLocation = { ...point, name: "your area", label: "Your location" };
+          onPinChangeRef.current?.({ point, describe });
+        };
+
+        // Names a point from the nearest place's address (reverse geocoding
+        // would need the separate Geocoding API; this uses Places, which
+        // the key already has).
+        const nameNearby = async (point: LatLng, fallback: string, label: string): Promise<PlanLocation> => {
           try {
             const { places } = await Place.searchNearby({
               fields: ["addressComponents"],
@@ -325,12 +314,27 @@ export function LiveMap({
               maxResultCount: 1,
               rankPreference: "DISTANCE",
             });
-            if (places[0]?.addressComponents?.length) described = describePlace(point, places[0].addressComponents, "your area");
+            if (places[0]?.addressComponents?.length) return describePlace(point, places[0].addressComponents, fallback);
           } catch (err) {
-            console.warn("[Landed] couldn't name the current location", err);
+            console.warn("[Landed] couldn't name the location", err);
           }
-          if (!cancelled && source === "device-button") onPlaceSelectRef.current?.(described, source);
+          return { ...point, name: fallback, label };
         };
+
+        // Centre on the device and put the pin there.
+        const centreOnDevice = (point: LatLng) => {
+          map.setCenter(point);
+          map.setZoom(14);
+          if (autocomplete) autocomplete.locationBias = { center: point, radius: 20000 };
+          setPin(point, () => nameNearby(point, "your area", "Your location"));
+        };
+
+        // Tap anywhere on the map to put the pin there.
+        map.addListener("click", (e: google.maps.MapMouseEvent) => {
+          if (!e.latLng) return;
+          const point = { lat: e.latLng.lat(), lng: e.latLng.lng() };
+          setPin(point, () => nameNearby(point, "this area", "Pinned location"));
+        });
 
         // Apply the device location unless a place was already chosen
         // meanwhile (a search, or a saved plan loading).
@@ -338,7 +342,7 @@ export function LiveMap({
           const point = await deviceLocation;
           if (cancelled || !point || locationRef.current) return;
           if (autoLocateAllowedRef.current && !autoLocateAllowedRef.current()) return;
-          await centreOnDevice(point, "device-auto");
+          centreOnDevice(point);
         };
 
         mountAutocomplete();
@@ -348,12 +352,12 @@ export function LiveMap({
         locateRef.current = async () => {
           const point = await getDeviceLocation();
           if (cancelled || !point) return false;
-          await centreOnDevice(point, "device-button");
+          centreOnDevice(point);
           return true;
         };
         setMapReady(true);
         resetRef.current = () => {
-          setPending(null);
+          onPinChangeRef.current?.(null);
           marker.setMap(null);
           autocomplete?.remove();
           mountAutocomplete();
@@ -401,7 +405,6 @@ export function LiveMap({
               {locateNote}
             </span>
           )}
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
           <button
             onClick={handleLocate}
             disabled={locating}
@@ -430,34 +433,6 @@ export function LiveMap({
             </svg>
             {locating ? "Finding you…" : "Use my location"}
           </button>
-          {pending && (
-            <button
-              onClick={confirmSelected}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "8px 14px",
-                borderRadius: 999,
-                fontSize: 12,
-                fontWeight: 700,
-                fontFamily: "inherit",
-                color: "#111111",
-                background: CTA_GRADIENT,
-                border: "none",
-                boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
-                cursor: "pointer",
-                pointerEvents: "auto",
-              }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#111111" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z" />
-                <circle cx="12" cy="9.5" r="2.5" />
-              </svg>
-              Use selected location
-            </button>
-          )}
-          </div>
         </div>
       )}
     </div>

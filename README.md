@@ -7,8 +7,10 @@ drink, see something live, and park — around a place and a vibe.
 
 - **Booking flow** (`app/page.tsx`): on opening, the browser asks to use
   the device's location; if allowed, the map centres there (otherwise a
-  wide UK & Ireland view). Nothing is searched until the person taps
-  **Use my location** or searches a place — then the plan appears. Pick
+  wide UK & Ireland view). The pin moves with a search result, **Use my
+  location**, or a tap anywhere on the map, but nothing is searched until
+  the person taps **Confirm location** under the map — then the plan
+  appears. Pick
   When / Vibe / Budget, swap or remove venue cards, and open the booking
   sheet. Plans auto-save as drafts; the + button saves the current plan
   and starts a fresh enquiry, locked at the map again.

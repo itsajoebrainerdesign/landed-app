@@ -46,7 +46,7 @@ import { useSheetLock, SHEET_SCROLL_STYLE } from "./lib/useSheetLock";
 import { QuickDropdown } from "./components/QuickDropdown";
 import { PlanItemCard } from "./components/PlanItemCard";
 import { SectionHeading } from "./components/SectionHeading";
-import { LiveMap } from "./components/LiveMap";
+import { LiveMap, type PendingPin } from "./components/LiveMap";
 import { LoadingBar } from "./components/LoadingBar";
 import { getBooking, saveBooking, newBookingId } from "./lib/bookingsStore";
 import type { SavedItem, SavedLiveResults } from "./lib/bookingsStore";
@@ -233,6 +233,20 @@ export default function Home() {
   // Only ever called by a person's action (a search, or the "Use my
   // location" button) — the automatic location on opening just moves the
   // map — so this is where a search can start.
+  // The map's pin, waiting for "Confirm location".
+  const [pendingPin, setPendingPin] = useState<PendingPin | null>(null);
+  const [confirmingPin, setConfirmingPin] = useState(false);
+  async function confirmPin() {
+    if (!pendingPin || confirmingPin) return;
+    setConfirmingPin(true);
+    try {
+      selectLocation(await pendingPin.describe());
+      setPendingPin(null);
+    } finally {
+      setConfirmingPin(false);
+    }
+  }
+
   function selectLocation(next: PlanLocation) {
     engagedRef.current = true;
     setLocationChosen(true);
@@ -702,10 +716,25 @@ export default function Home() {
             className="w-full rounded-2xl bg-[#E6E0D0] flex items-center justify-center text-sm text-black/40"
             style={{ flex: "1 1 auto", minHeight: 0 }}
             location={locationChosen ? location : undefined}
-            onPlaceSelect={selectLocation}
+            onPinChange={setPendingPin}
             autoLocateAllowed={() => !openingSavedPlanRef.current}
             resetSignal={mapResetSignal}
           />
+          {/* The only thing that starts a search: the pin (from a search
+              result, the device, or a tap on the map) is used once this is
+              tapped. Hidden when the pin is already the plan's place. */}
+          {pendingPin && !(locationChosen && Math.abs(pendingPin.point.lat - location.lat) < 1e-6 && Math.abs(pendingPin.point.lng - location.lng) < 1e-6) && (
+            <button
+              onClick={confirmPin}
+              disabled={confirmingPin}
+              className="w-full h-[48px] rounded-full flex items-center justify-center"
+              style={{ background: CTA_GRADIENT, border: "none", cursor: confirmingPin ? "default" : "pointer", opacity: confirmingPin ? 0.7 : 1, flexShrink: 0 }}
+            >
+              <span className="font-semibold text-[13px]" style={{ color: "#111111" }}>
+                {confirmingPin ? "Confirming…" : "Confirm location"}
+              </span>
+            </button>
+          )}
         </div>
       </div>
 
