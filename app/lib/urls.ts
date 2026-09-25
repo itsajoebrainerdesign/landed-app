@@ -128,8 +128,8 @@ export function planItemLink(
   time?: string,
   vibe?: string,
   areaPos?: { lat?: number; lng?: number }
-): { href: string; label: string } {
-  if (cat === "stay") return { href: stayBookingUrl(item, area, time, vibe, areaPos), label: "Book ↗" };
+): { href: string; label: string; sponsored?: boolean } {
+  if (cat === "stay") return { href: stayBookingUrl(item, area, time, vibe, areaPos), label: "Book ↗", sponsored: AFFILIATE_LINKS_ON };
   if (cat === "attractions" || cat === "live") return { href: ticketSearchUrl(item.title, area, item.website), label: "Get Tickets ↗" };
   if (cat === "parking") return { href: mapsUrl(item.title, area), label: "Get Directions ↗" };
   return { href: bookingSearchUrl(item.title, area, item.website), label: "Book ↗" };

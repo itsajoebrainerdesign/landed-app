@@ -39,8 +39,9 @@ export function PlanSheetItems({
   return (
     <>
       {items.map(([cat, item]) => {
-        const link = planItemLink(cat, item, area, time, vibe, areaPos);
-        const partner = item.hasApiBooking ? null : partnerLink(cat, item, area);
+        // Through the category's affiliate partner once it's set up;
+        // otherwise the venue's website / ticket search / directions.
+        const link = partnerLink(cat, item, area) ?? planItemLink(cat, item, area, time, vibe, areaPos);
         return (
           <div key={cat} style={{ borderRadius: 20, background: "#F7F5EE", padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
             <span style={{ alignSelf: "flex-start", borderRadius: 999, padding: "6px 14px", fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", background: item.tagBg, color: "#111111" }}>
@@ -67,23 +68,13 @@ export function PlanSheetItems({
                 <a
                   href={link.href}
                   target="_blank"
-                  rel="noopener noreferrer"
+                  rel={link.sponsored ? "noopener noreferrer sponsored" : "noopener noreferrer"}
                   style={{ borderRadius: 999, padding: "8px 14px", fontSize: 11, fontWeight: 700, background: CTA_GRADIENT, color: "#111111", textDecoration: "none" }}
                 >
                   {link.label}
                 </a>
               )}
             </div>
-            {partner && (
-              <a
-                href={partner.href}
-                target="_blank"
-                rel="noopener noreferrer sponsored"
-                style={{ alignSelf: "flex-end", fontSize: 11, fontWeight: 700, color: "#111111", textDecoration: "underline" }}
-              >
-                {partner.label}
-              </a>
-            )}
           </div>
         );
       })}

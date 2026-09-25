@@ -1,10 +1,11 @@
 // Affiliate booking links beyond Booking.com (stays — see urls.ts).
 //
-// Each venue card in the plan sheets keeps its main button (the venue's
-// own website, tickets search, or directions) and, once a programme below
-// is set up, gets a second link to book through that partner, carrying
-// our tracking so bookings earn commission. Nothing shows until the
-// programme's IDs are set, so the app works the same without them.
+// Once a programme below is set up, the main button on that category's
+// venue cards in the plan sheets books through the partner, carrying our
+// tracking so bookings earn commission (a venue the partner doesn't list
+// shows the partner's nearby alternatives). Until the programme's IDs are
+// set, the button keeps linking to the venue's own website, a ticket
+// search, or directions.
 //
 // Setup (Vercel → Settings → Environment Variables, then redeploy):
 // - Awin programmes (OpenTable, Ticketmaster, JustPark): your Awin
@@ -34,21 +35,23 @@ function awin(mid: string, destination: string): string | null {
 
 const withArea = (name: string, area?: string) => (area ? `${name} ${area}` : name);
 
-// The partner link for a venue in a plan, or null when that category's
-// programme isn't set up.
-export function partnerLink(cat: string, venue: Venue, area?: string): { href: string; label: string } | null {
+type PartnerLink = { href: string; label: string; sponsored: true };
+
+// The partner link for a venue's main button, or null when that
+// category's programme isn't set up.
+export function partnerLink(cat: string, venue: Venue, area?: string): PartnerLink | null {
   if (cat === "restaurant" || cat === "bar") {
     const href = awin(AWIN_MID.opentable, "https://www.opentable.co.uk/s?term=" + encodeURIComponent(withArea(venue.title, area)));
-    return href ? { href, label: "Book on OpenTable ↗" } : null;
+    return href ? { href, label: "Book ↗", sponsored: true } : null;
   }
   if (cat === "live") {
     const href = awin(AWIN_MID.ticketmaster, "https://www.ticketmaster.co.uk/search?q=" + encodeURIComponent(withArea(venue.title, area)));
-    return href ? { href, label: "Tickets on Ticketmaster ↗" } : null;
+    return href ? { href, label: "Get Tickets ↗", sponsored: true } : null;
   }
   if (cat === "attractions") {
     if (!GETYOURGUIDE_PARTNER_ID) return null;
     const params = new URLSearchParams({ q: withArea(venue.title, area), partner_id: GETYOURGUIDE_PARTNER_ID, utm_medium: "online_publisher" });
-    return { href: "https://www.getyourguide.co.uk/s/?" + params.toString(), label: "Tickets on GetYourGuide ↗" };
+    return { href: "https://www.getyourguide.co.uk/s/?" + params.toString(), label: "Get Tickets ↗", sponsored: true };
   }
   if (cat === "parking") {
     const params = new URLSearchParams({ q: withArea(venue.title, area) });
@@ -57,7 +60,7 @@ export function partnerLink(cat: string, venue: Venue, area?: string): { href: s
       params.set("lng", venue.lng.toFixed(6));
     }
     const href = awin(AWIN_MID.justpark, "https://www.justpark.com/search/?" + params.toString());
-    return href ? { href, label: "Book on JustPark ↗" } : null;
+    return href ? { href, label: "Book Parking ↗", sponsored: true } : null;
   }
   return null;
 }
