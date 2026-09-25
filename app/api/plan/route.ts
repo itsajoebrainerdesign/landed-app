@@ -9,6 +9,7 @@ import { haversineKm } from "../../lib/geo";
 import { getServerSupabase } from "../../lib/supabase/server";
 import { getAdminSupabase } from "../../lib/supabase/admin";
 import { findPartnerPages, partnerChecksSignature } from "../../lib/partnerChecks";
+import { startLocalKnowledge, badgesFor, signalNote, recommendedElsewhere, type Knowledge } from "../../lib/localKnowledge";
 
 /**
  * POST /api/plan
@@ -70,6 +71,16 @@ import { findPartnerPages, partnerChecksSignature } from "../../lib/partnerCheck
 export const maxDuration = 300;
 
 type PlanRequest = { location: string; lat: number; lng: number; vibe: VibeKey; travel: TravelMode };
+// Local knowledge for the search in progress (localKnowledge.ts).
+type LocalKnowledge = { fast: Promise<Knowledge>; full: Promise<Knowledge> };
+// How long a category's AI pick waits for the slow part (the guides) on an
+// area it hasn't seen before — about 80s, once a week per area; the
+// Google draft shows meanwhile. After this it goes with the fast part,
+// and the final result still gets every badge.
+const LOCAL_WAIT_MS = 90_000;
+async function localFor(local: LocalKnowledge): Promise<Knowledge> {
+  return Promise.race([local.full, new Promise<Knowledge>((resolve) => setTimeout(() => resolve(local.fast), LOCAL_WAIT_MS))]);
+}
 type CategoryResults = Partial<Record<CategoryKey, CategoryOption[]>>;
 type LiveOptions = Partial<Record<TimeKey, CategoryResults>>;
 const TIME_KEYS = TIME_OPTIONS.map((o) => o.key);
@@ -407,7 +418,7 @@ function localDate(lng: number): string {
 }
 
 function cacheKey(input: PlanRequest): string {
-  return `v7${partnerChecksSignature()}|${input.lat.toFixed(2)},${input.lng.toFixed(2)}|${input.vibe}|${input.travel}|${localDate(input.lng)}`;
+  return `v10${partnerChecksSignature()}|${input.lat.toFixed(2)},${input.lng.toFixed(2)}|${input.vibe}|${input.travel}|${localDate(input.lng)}`;
 }
 
 function readMemoryCache(key: string): PlanData | null {
@@ -572,7 +583,17 @@ async function buildPlan(input: PlanRequest, emit: Emit): Promise<BuildResult> {
   }
 
   // 1) What's actually near the pin, from Google → the instant draft.
+  //    Local knowledge (guides, Reddit, hygiene…) starts gathering at the
+  //    same time.
   const usage = newUsage();
+  const local: LocalKnowledge | null = anthropicKey
+    ? startLocalKnowledge({ lat: input.lat, lng: input.lng, location: input.location }, anthropicKey, (u) => {
+        usage.inputTokens += u.inputTokens;
+        usage.outputTokens += u.outputTokens;
+        usage.webSearches += u.webSearches;
+        usage.usd += u.usd;
+      })
+    : null;
   const lists = await findNearbyLists(input, placesKey, warnings, usage);
   const draft = draftFromLists(lists, input);
   if (hasVenues(draft)) emit({ type: "draft", options: serveOptions(draft, Date.now()) });
@@ -589,7 +610,7 @@ async function buildPlan(input: PlanRequest, emit: Emit): Promise<BuildResult> {
   const started = Date.now();
   await Promise.all(
     CATEGORY_ORDER.map(async (cat) => {
-      const part = await searchCategory(cat, input, anthropicKey, placesKey, lists, warnings, usage).catch((err) => {
+      const part = await searchCategory(cat, input, anthropicKey, placesKey, lists, warnings, usage, local).catch((err) => {
         console.error(`[api/plan] ${cat} search failed`, err);
         return null;
       });
@@ -601,6 +622,19 @@ async function buildPlan(input: PlanRequest, emit: Emit): Promise<BuildResult> {
       emit({ type: "category", category: cat, options: serveCategory(use, cat, Date.now()) });
     })
   );
+
+  // Every venue gets its badges from the complete local knowledge (a
+  // category that didn't wait for the guides and Reddit still gets theirs).
+  if (local) {
+    const k = await Promise.race([local.full, new Promise<Knowledge | null>((r) => setTimeout(() => r(null), LOCAL_WAIT_MS))]);
+    if (k) {
+      for (const cat of CATEGORY_ORDER) {
+        for (const o of categoryOptionsOf(result, cat)) {
+          o.badges = badgesFor(cat, o.title, k, input.location, typeof o.lat === "number" && typeof o.lng === "number" ? { lat: o.lat, lng: o.lng } : undefined);
+        }
+      }
+    }
+  }
 
   console.info(
     `[api/plan] ${input.location} ${input.vibe}: listed ` +
@@ -670,13 +704,15 @@ async function searchCategory(
   placesKey: string,
   lists: NearbyLists,
   warnings: string[],
-  usage: SearchUsage
+  usage: SearchUsage,
+  local: LocalKnowledge | null
 ): Promise<PlanData | null> {
-  const candidates = await findCandidatesForCategory(cat, input, anthropicKey, lists[cat] ?? [], warnings, usage);
+  const knowledge = local ? await localFor(local) : null;
+  const candidates = await findCandidatesForCategory(cat, input, anthropicKey, lists[cat] ?? [], warnings, usage, knowledge);
   if (candidates.length === 0) return null;
   const verified = await verifyWithGooglePlaces(candidates, input, placesKey, warnings, lists, usage);
   if (verified.length === 0) return null;
-  return assemble(verified, input);
+  return assemble(verified, input, knowledge);
 }
 
 // ── AI pick, one category at a time ─────────────────────────────────────
@@ -759,6 +795,7 @@ Guidance:
 - Choose from the Google Maps list in the request wherever it fits, using names exactly as written — those places are real, open and near the pin. Closer is better among good options. Only add a place that isn't listed if the list has nothing suitable.
 - Only choose venues that suit the requested vibe.
 - price_gbp is your best current estimate, in British pounds (convert local prices if needed); the list's £–££££ is Google's price level. The app labels prices as estimates.
+- Local knowledge (when shown) is what trusted guides (Michelin, Good Food Guide, Time Out, CAMRA…), Wikipedia and official food hygiene ratings say. It's the most honest signal you have: favour venues it recommends, take any WARNING seriously, and avoid food hygiene ratings of 0–2 unless nothing else suits.
 - Keep "highlight" short.
 - When you've chosen, call submit_venues once. Don't write a prose answer.`;
 
@@ -781,7 +818,8 @@ async function findCandidatesForCategory(
   apiKey: string,
   list: NearbyPlace[],
   warnings: string[],
-  usage: SearchUsage
+  usage: SearchUsage,
+  knowledge: Knowledge | null
 ): Promise<Candidate[]> {
   const model = CATEGORY_MODEL[cat];
   const setup = MODEL_SETUP[model];
@@ -800,8 +838,21 @@ async function findCandidatesForCategory(
         `Vibe: ${vibeLabel} (${input.vibe}).\n\n` +
         (list.length
           ? `Near the pin, from Google Maps (closest first; ★rating (reviews); £–££££ price level):\n` +
-            list.map((p) => `- ${describeNearby(p)}`).join("\n")
+            list.map((p) => {
+              const note = signalNote(
+                cat,
+                p.place.displayName?.text ?? "",
+                knowledge,
+                input.location,
+                p.place.location ? { lat: p.place.location.latitude, lng: p.place.location.longitude } : undefined
+              );
+              return `- ${describeNearby(p)}${note ? `\n    Local knowledge: ${note}` : ""}`;
+            }).join("\n")
           : `Google Maps had nothing listed for this category near the pin${isLive ? "" : " — suggest only places you're confident exist within walking distance"}.`) +
+        (() => {
+          const extra = recommendedElsewhere(cat, knowledge, list.map((p) => p.place.displayName?.text ?? ""), input.location);
+          return extra.length ? `\n\nAlso recommended nearby by trusted guides or locals (not in the Google list; add one only if it's genuinely within walking distance of the pin):\n${extra.map((e) => `- ${e}`).join("\n")}` : "";
+        })() +
         (isLive ? `\n\n${LIVE_GUIDANCE}` : "") +
         (travelGuidance(cat, input.travel) ? `\n\n${travelGuidance(cat, input.travel)}` : ""),
     },
@@ -927,6 +978,8 @@ type Place = {
   utcOffsetMinutes?: number;
   types?: string[];
   websiteUri?: string;
+  editorialSummary?: { text?: string };
+  reviews?: { rating?: number; relativePublishTimeDescription?: string; text?: { text?: string } }[];
   photos?: { name: string; authorAttributions?: { displayName?: string }[] }[];
 };
 type Verified = { candidate: Candidate; place: Place; distanceKm: number };
@@ -1081,7 +1134,9 @@ async function nearbySearch(q: NearbyQuery, radiusKm: number, input: PlanRequest
     headers: {
       "Content-Type": "application/json",
       "X-Goog-Api-Key": apiKey,
-      "X-Goog-FieldMask": PLACES_FIELDS + ",places.userRatingCount,places.primaryType,places.priceLevel",
+      // Plus Google's editorial summary and a few recent reviews, read by
+      // the AI as honest signals (not shown or stored).
+      "X-Goog-FieldMask": PLACES_FIELDS + ",places.userRatingCount,places.primaryType,places.priceLevel,places.editorialSummary,places.reviews",
     },
     body: JSON.stringify({
       [q.primary ? "includedPrimaryTypes" : "includedTypes"]: q.types,
@@ -1181,7 +1236,13 @@ function describeNearby({ place, distanceKm }: NearbyPlace): string {
   const kind = (place.primaryType || place.types?.[0] || "").replace(/_/g, " ");
   const rating = typeof place.rating === "number" ? ` ★${place.rating.toFixed(1)} (${place.userRatingCount ?? 0})` : "";
   const price = place.priceLevel && PRICE_LEVEL_LABEL[place.priceLevel] ? ` ${PRICE_LEVEL_LABEL[place.priceLevel]}` : "";
-  return `${place.displayName?.text} — ${distanceKm.toFixed(1)} km — ${kind}${rating}${price}`;
+  const summary = place.editorialSummary?.text ? ` — "${place.editorialSummary.text.slice(0, 140)}"` : "";
+  // Two most recent reviews, trimmed: what people say now.
+  const reviews = (place.reviews ?? [])
+    .filter((r) => r.text?.text)
+    .slice(0, 2)
+    .map((r) => `${r.rating ?? "?"}★ ${r.relativePublishTimeDescription ?? ""}: ${r.text!.text!.replace(/\s+/g, " ").slice(0, 160)}`);
+  return `${place.displayName?.text} — ${distanceKm.toFixed(1)} km — ${kind}${rating}${price}${summary}${reviews.length ? `\n    Recent Google reviews: ${reviews.join(" | ")}` : ""}`;
 }
 
 // A venue the AI picked from a list: the same Google place, no lookup
@@ -1286,7 +1347,7 @@ function photosOf(place: Place): VenuePhoto[] | undefined {
   return photos.length ? photos : undefined;
 }
 
-function assemble(verified: Verified[], input: PlanRequest): PlanData {
+function assemble(verified: Verified[], input: PlanRequest, knowledge: Knowledge | null = null): PlanData {
   const data = emptyPlan();
   const seen = new Set<string>();
   for (const { candidate, place, distanceKm } of verified) {
@@ -1320,6 +1381,7 @@ function assemble(verified: Verified[], input: PlanRequest): PlanData {
       lat: place.location?.latitude,
       lng: place.location?.longitude,
       photos: photosOf(place),
+      badges: badgesFor(cat, place.displayName!.text, knowledge, input.location, place.location ? { lat: place.location.latitude, lng: place.location.longitude } : undefined),
       website: place.websiteUri,
     };
     data.hours[option.id] = hoursOf(place);

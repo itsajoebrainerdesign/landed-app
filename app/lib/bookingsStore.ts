@@ -12,7 +12,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "./supabase/client";
 import type { PlanLocation } from "./geo";
-import type { CategoryOption, VenuePhoto } from "./categoryOptions";
+import type { CategoryOption, VenuePhoto, Badge } from "./categoryOptions";
 
 // The live search results a plan was built from: per timeframe ("now",
 // "tonight", "tomorrow"), per category.
@@ -37,6 +37,7 @@ export type SavedItem = {
   lat?: number;
   lng?: number;
   photos?: VenuePhoto[];
+  badges?: Badge[];
   website?: string;
   partnerUrl?: string;
 };

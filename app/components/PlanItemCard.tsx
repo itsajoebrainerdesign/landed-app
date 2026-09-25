@@ -48,6 +48,37 @@ export function PlanItemCard({
             <span style={{ fontSize: 11, color: "#767766" }}>{item.phone}</span>
           </a>
         </div>
+        {/* Trust badges: what guides, locals and official sources say, each
+            linking to where it came from. */}
+        {item.badges && item.badges.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {item.badges.map((b, i) => {
+              const style: React.CSSProperties = {
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                fontSize: 10,
+                fontWeight: 700,
+                borderRadius: 999,
+                padding: "4px 10px",
+                textDecoration: "none",
+                color: b.tone === "warn" ? "#7A3A06" : "#111111",
+                background: b.tone === "warn" ? "#FBE3CC" : "#FFFFFF",
+                border: `1px solid ${b.tone === "warn" ? "#F0B98A" : "#D8D3C4"}`,
+              };
+              const text = b.tone === "warn" ? `⚠ ${b.label}` : b.label;
+              return b.url ? (
+                <a key={i} href={b.url} target="_blank" rel="noopener noreferrer" title={`From ${b.source}`} style={style}>
+                  {text} ↗
+                </a>
+              ) : (
+                <span key={i} title={`From ${b.source}`} style={style}>
+                  {text}
+                </span>
+              );
+            })}
+          </div>
+        )}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
           {meta.map((m, i) => (
             <span key={i} style={{ fontSize: 10, fontWeight: 600, borderRadius: 999, padding: "4px 10px", background: "#DFDACB", color: "#111111" }}>

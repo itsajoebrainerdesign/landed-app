@@ -16,6 +16,11 @@ export type CategoryKey = "stay" | "restaurant" | "attractions" | "bar" | "live"
 // shown alongside.
 export type VenuePhoto = { name: string; author?: string };
 
+// A trust signal from an outside source (a guide listing, locals on
+// Reddit, a food hygiene rating…), shown on the card and linking to the
+// source. See app/lib/localKnowledge.ts.
+export type Badge = { label: string; source: string; url?: string; tone?: "good" | "warn" };
+
 export type CategoryOption = {
   id: string;
   tag: string;
@@ -47,6 +52,8 @@ export type CategoryOption = {
   // …), set only when the search confirmed it's listed there. The main
   // button books through it (app/lib/affiliates.ts).
   partnerUrl?: string;
+  // What trusted guides, locals and official sources say about it.
+  badges?: Badge[];
   // Photos from Google Places (one per venue — each one shown is billed).
   photos?: VenuePhoto[];
 };

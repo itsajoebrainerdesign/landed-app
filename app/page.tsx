@@ -30,6 +30,7 @@ function resultsFromSavedItems(items: Record<string, SavedItem>): LiveResults {
         lat: item.lat,
         lng: item.lng,
         photos: item.photos,
+        badges: item.badges,
         website: item.website,
         partnerUrl: item.partnerUrl,
       }),
@@ -180,6 +181,7 @@ export default function Home() {
         lat: item.lat,
         lng: item.lng,
         photos: item.photos,
+        badges: item.badges,
         website: item.website,
         partnerUrl: item.partnerUrl,
       }));
