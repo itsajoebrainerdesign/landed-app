@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { VIBE_OPTIONS, BUDGET_OPTIONS, CTA_GRADIENT, normalizeBudget } from "../lib/constants";
 import { mapsUrl, ticketSearchUrl, bookingSearchUrl, stayBookingUrl } from "../lib/urls";
 import { formatDate } from "../lib/format";
 import type { SavedBooking } from "../lib/bookingsStore";
-import { listBookings } from "../lib/bookingsStore";
+import { listBookings, deleteBooking } from "../lib/bookingsStore";
+import { SwipeToRemove } from "../components/SwipeToRemove";
 import { onAuthChange } from "../lib/accountStore";
 
 // Note: lib/categoryOptions.ts has its own, deliberately different
@@ -230,6 +231,47 @@ export default function Bookings() {
   const [bookings, setBookings] = useState<SavedBooking[] | null>(null);
   const [viewing, setViewing] = useState<SavedBooking | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // The last card swiped away. It's only deleted for real once the Undo
+  // toast goes (or on leaving the page), so a slip is easy to take back.
+  const [removed, setRemoved] = useState<SavedBooking | null>(null);
+  const pendingDelete = useRef<{ id: string; timer: ReturnType<typeof setTimeout> } | null>(null);
+
+  function commitDelete() {
+    const pending = pendingDelete.current;
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    pendingDelete.current = null;
+    setRemoved(null);
+    deleteBooking(pending.id).then(({ error }) => {
+      if (error) setLoadError(`Couldn't remove that plan: ${error}`);
+    });
+  }
+
+  function remove(booking: SavedBooking) {
+    commitDelete(); // one undo at a time
+    setBookings((list) => (list ? list.filter((b) => b.id !== booking.id) : list));
+    setRemoved(booking);
+    pendingDelete.current = { id: booking.id, timer: setTimeout(commitDelete, 5000) };
+  }
+
+  function undoRemove() {
+    const pending = pendingDelete.current;
+    if (!pending || !removed) return;
+    clearTimeout(pending.timer);
+    pendingDelete.current = null;
+    const restored = removed;
+    setBookings((list) => (list ? [...list, restored].sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : list));
+    setRemoved(null);
+  }
+
+  // Leaving the page (or closing the tab) finishes a pending removal.
+  useEffect(() => {
+    window.addEventListener("pagehide", commitDelete);
+    return () => {
+      window.removeEventListener("pagehide", commitDelete);
+      commitDelete();
+    };
+  }, []);
 
   // From the account when signed in, this device when not — and reloaded
   // whenever someone signs in or out.
@@ -286,7 +328,9 @@ export default function Bookings() {
         <div className="flex flex-col gap-3.5">
           <span className="font-semibold text-[20px] leading-none text-ink">Draft Bookings</span>
           {drafts.map((b) => (
-            <BookingCard key={b.id} booking={b} />
+            <SwipeToRemove key={b.id} onRemove={() => remove(b)}>
+              <BookingCard booking={b} />
+            </SwipeToRemove>
           ))}
         </div>
       )}
@@ -310,10 +354,24 @@ export default function Bookings() {
               </span>
             ) : (
               confirmed.map((b) => (
-                <BookingCard key={b.id} booking={b} onView={setViewing} cardBg="#FFFFFF" />
+                <SwipeToRemove key={b.id} onRemove={() => remove(b)}>
+                  <BookingCard booking={b} onView={setViewing} cardBg="#FFFFFF" />
+                </SwipeToRemove>
               ))
             )}
           </div>
+        </div>
+      )}
+
+      {removed && (
+        <div
+          role="status"
+          style={{ position: "fixed", left: 21, right: 21, bottom: 96, zIndex: 40, borderRadius: 999, background: "#111111", color: "#FFFFFF", padding: "10px 10px 10px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 13 }}
+        >
+          <span>{removed.confirmed ? "Booking" : "Draft"} removed</span>
+          <button onClick={undoRemove} style={{ borderRadius: 999, padding: "6px 14px", fontSize: 12, fontWeight: 700, border: "none", background: "#DEEB3A", color: "#111111", cursor: "pointer" }}>
+            Undo
+          </button>
         </div>
       )}
 

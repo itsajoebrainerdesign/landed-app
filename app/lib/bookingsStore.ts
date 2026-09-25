@@ -229,6 +229,21 @@ export async function saveBooking(booking: SavedBooking): Promise<{ savedTo: Boo
   return { savedTo: "device" };
 }
 
+export async function deleteBooking(id: string): Promise<{ error?: string }> {
+  const session = await signedInClient();
+  if (session) {
+    const { error } = await session.sb.from("bookings").delete().eq("id", id);
+    if (error) {
+      console.error("[Landed] couldn't delete booking", error);
+      return { error: describeError(error) };
+    }
+    return {};
+  }
+  const list = readDeviceBookings();
+  if (list) writeDeviceBookings(list.filter((b) => b.id !== id));
+  return {};
+}
+
 function saveToDevice(booking: SavedBooking) {
   const list = readDeviceBookings() || [];
   const idx = list.findIndex((b) => b.id === booking.id);
