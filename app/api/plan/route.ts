@@ -1206,6 +1206,8 @@ function assemble(verified: Verified[], input: PlanRequest): PlanData {
       vibes: [input.vibe],
       meta,
       budget: candidate.budget,
+      lat: place.location?.latitude,
+      lng: place.location?.longitude,
     };
     data.hours[option.id] = hoursOf(place);
 

@@ -34,6 +34,8 @@ export type SavedItem = {
   phone?: string;
   vibes?: string[];
   meta?: string[];
+  lat?: number;
+  lng?: number;
 };
 export type SavedBooking = {
   id: string;

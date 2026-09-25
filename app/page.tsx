@@ -33,7 +33,7 @@ function resultsFromSavedItems(items: Record<string, SavedItem>): LiveResults {
   return { now: byCat, tonight: byCat, tomorrow: byCat };
 }
 import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_OPTIONS, computePicks, mergeCatalog, optionsForBudget } from "./lib/categoryOptions";
-import { mapsUrl, ticketSearchUrl, bookingSearchUrl } from "./lib/urls";
+import { mapsUrl, ticketSearchUrl, bookingSearchUrl, stayBookingUrl, AFFILIATE_LINKS_ON } from "./lib/urls";
 import { telHref } from "./lib/format";
 import { PinIcon, PhoneIcon, PhotoIcon } from "./components/icons";
 import { QuickDropdown } from "./components/QuickDropdown";
@@ -1141,7 +1141,7 @@ export default function Home() {
                       )
                     ) : (
                       <a
-                        href={bookingSearchUrl(item.title, location.name)}
+                        href={stayBookingUrl(item, location.name, time)}
                         target="_blank"
                         rel="noopener noreferrer"
                         style={{ alignSelf: "flex-start", borderRadius: 999, padding: "10px 18px", fontSize: 12, fontWeight: 700, color: "#111111", background: CTA_GRADIENT, textDecoration: "none" }}
@@ -1250,6 +1250,8 @@ export default function Home() {
           <div style={{ padding: "12px 20px 20px", flexShrink: 0, borderTop: "1px solid #EFEFEF" }}>
             <span style={{ display: "block", fontSize: 12, color: "#767766", marginBottom: 12 }}>
               Anything with a live booking connection is booked automatically when you confirm — everything else opens a real booking page for you to finish there yourself.
+              {/* Affiliate disclosure (UK advertising rules), once affiliate links are live. */}
+              {AFFILIATE_LINKS_ON && bookableCategories.includes("stay") && " We may earn a commission if you book a stay through these links."}
             </span>
             <button
               onClick={() => {

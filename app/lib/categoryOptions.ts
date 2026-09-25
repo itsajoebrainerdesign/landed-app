@@ -30,6 +30,10 @@ export type CategoryOption = {
   // Budget tier, set by the live search. Missing on the static catalog,
   // where it's worked out from price (see budgetTierOf).
   budget?: BudgetKey;
+  // Map position, from Google (live results only) — used to open
+  // Booking.com centred on a stay.
+  lat?: number;
+  lng?: number;
 };
 
 export const CATEGORY_ORDER: CategoryKey[] = ["stay", "restaurant", "attractions", "bar", "live", "parking"];

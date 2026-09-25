@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { VIBE_OPTIONS, BUDGET_OPTIONS, CTA_GRADIENT, normalizeBudget } from "../lib/constants";
-import { mapsUrl, ticketSearchUrl, bookingSearchUrl } from "../lib/urls";
+import { mapsUrl, ticketSearchUrl, bookingSearchUrl, stayBookingUrl } from "../lib/urls";
 import { formatDate } from "../lib/format";
 import type { SavedBooking } from "../lib/bookingsStore";
 import { listBookings, writeDeviceBookings } from "../lib/bookingsStore";
@@ -204,8 +204,9 @@ function BookingCard({
 }
 
 // `area` is the booking's location name (Galway for plans saved before
-// the map search could move a plan).
-function linkForCategory(cat: string, name: string, area?: string) {
+// the map search could move a plan); `time` sets a stay's dates.
+function linkForCategory(cat: string, name: string, area?: string, time?: string, pos?: { lat?: number; lng?: number }) {
+  if (cat === "stay") return { href: stayBookingUrl({ title: name, ...pos }, area, time), label: "Book ↗" };
   if (cat === "attractions" || cat === "live") return { href: ticketSearchUrl(name, area), label: "Get Tickets ↗" };
   if (cat === "parking") return { href: mapsUrl(name, area), label: "Get Directions ↗" };
   return { href: bookingSearchUrl(name, area), label: "Book ↗" };
@@ -270,7 +271,7 @@ function ViewBookingSheet({
         </span>
         <div style={{ overflowY: "auto", padding: "0 20px 20px", display: "flex", flexDirection: "column", gap: 16, flex: "1 1 auto", minHeight: 0 }}>
           {items.map(([cat, item]) => {
-            const link = linkForCategory(cat, item.title, booking?.location?.name);
+            const link = linkForCategory(cat, item.title, booking?.location?.name, booking?.time, { lat: item.lat, lng: item.lng });
             return (
               <div key={cat} style={{ borderRadius: 20, background: "#F7F5EE", padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
                 <span style={{ alignSelf: "flex-start", borderRadius: 999, padding: "6px 14px", fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", background: item.tagBg, color: "#111111" }}>

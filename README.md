@@ -27,6 +27,12 @@ drink, see something live, and park — around a place and a vibe.
   confirmed plans are stored per user. Signed-out visitors can still make
   and save plans on their device; those move into their account the first
   time they sign in.
+- **Affiliate booking links**: stays open Booking.com centred on the hotel
+  with the dates filled in (Tonight/Now → tonight, Tomorrow → tomorrow
+  night, 2 adults). Set `NEXT_PUBLIC_BOOKING_AFFILIATE_ID` (your Booking.com
+  Affiliate Partner ID) to earn commission; the booking sheet then shows a
+  short affiliate disclosure. Restaurants, bars and tickets still open a
+  web search until other affiliate programmes are added.
 - **Not built yet**: payments (Stripe — the Account page's payment section
   is a placeholder), partner booking APIs (the "Connect" buttons are
   disabled), and plans shared between users (Explore says "No plans in
