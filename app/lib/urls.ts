@@ -32,6 +32,22 @@ export function placeMapsUrl(venue: { title: string; id?: string; address?: stri
   return placeId ? url + "&query_place_id=" + encodeURIComponent(placeId) : url;
 }
 
+// The same venue in Apple Maps: a search for its name and address around
+// its position, which opens its place page (where Save / Add to Guide is).
+export function appleMapsUrl(venue: { title: string; address?: string; lat?: number; lng?: number }, area?: string) {
+  const params = new URLSearchParams({ q: venue.address ? `${venue.title}, ${venue.address}` : withArea(venue.title, area) });
+  if (typeof venue.lat === "number" && typeof venue.lng === "number") params.set("sll", `${venue.lat},${venue.lng}`);
+  return "https://maps.apple.com/?" + params.toString();
+}
+
+// Android: a geo: link opens the phone's default maps app (or asks which
+// one), searching for the venue's name and address.
+export function geoUrl(venue: { title: string; address?: string; lat?: number; lng?: number }, area?: string) {
+  const text = venue.address ? `${venue.title}, ${venue.address}` : withArea(venue.title, area);
+  const at = typeof venue.lat === "number" && typeof venue.lng === "number" ? `${venue.lat},${venue.lng}` : "0,0";
+  return `geo:${at}?q=${encodeURIComponent(text)}`;
+}
+
 // Some venues list a platform's homepage (e.g. just "instagram.com")
 // rather than their page on it — useless as a link.
 const PLATFORM_HOSTS = ["instagram.com", "facebook.com", "tiktok.com", "twitter.com", "x.com", "linktr.ee", "google.com", "linkedin.com"];
