@@ -42,6 +42,7 @@ import { telHref } from "./lib/format";
 import { PinIcon, PhoneIcon } from "./components/icons";
 import { VenuePhotoTile } from "./components/VenuePhotoTile";
 import { PlanSheetItems } from "./components/PlanSheetItems";
+import { useSheetLock, SHEET_SCROLL_STYLE } from "./lib/useSheetLock";
 import { QuickDropdown } from "./components/QuickDropdown";
 import { PlanItemCard } from "./components/PlanItemCard";
 import { SectionHeading } from "./components/SectionHeading";
@@ -367,14 +368,8 @@ export default function Home() {
     };
   }, [locationChosen]);
 
-  useEffect(() => {
-    if (!openSwap && !bookingOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [openSwap, bookingOpen]);
+  // Nothing behind an open sheet can be scrolled or touched.
+  useSheetLock(!!openSwap || bookingOpen);
 
   // Drag-to-close for the two bottom sheets: the handle bar area tracks
   // vertical drag, the sheet follows it 1:1, and releasing past a threshold
@@ -966,7 +961,7 @@ export default function Home() {
               ✕
             </button>
           </div>
-          <div className="overflow-y-auto px-5 pb-8 flex flex-col gap-4" style={{ flex: "1 1 auto", minHeight: 0 }}>
+          <div className="overflow-y-auto px-5 pb-8 flex flex-col gap-4" style={{ flex: "1 1 auto", minHeight: 0, ...SHEET_SCROLL_STYLE }}>
             {openSwap &&
               // Swaps come from the same budget tier as the plan: other
               // luxury options when Budget is Luxury, other low-cost ones
@@ -1078,7 +1073,7 @@ export default function Home() {
           {bookableCategories.length > 0 && (
             <span style={{ padding: "0 20px 16px", fontSize: 12, color: "#767766", flexShrink: 0 }}>{planSummary}</span>
           )}
-          <div style={{ overflowY: "auto", padding: "0 20px 32px", display: "flex", flexDirection: "column", gap: 16, flex: "1 1 auto", minHeight: 0 }}>
+          <div style={{ overflowY: "auto", padding: "0 20px 32px", display: "flex", flexDirection: "column", gap: 16, flex: "1 1 auto", minHeight: 0, ...SHEET_SCROLL_STYLE }}>
             {bookableCategories.length === 0 && (
               <div style={{ borderRadius: 20, background: "#F7F5EE", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
                 <span style={{ fontSize: 13, color: "#767766", lineHeight: 1.4 }}>

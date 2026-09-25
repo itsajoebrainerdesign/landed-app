@@ -8,6 +8,7 @@ import type { SavedBooking } from "../lib/bookingsStore";
 import { listBookings, deleteBooking } from "../lib/bookingsStore";
 import { SwipeToRemove } from "../components/SwipeToRemove";
 import { PlanSheetItems } from "../components/PlanSheetItems";
+import { useSheetLock, SHEET_SCROLL_STYLE } from "../lib/useSheetLock";
 import { onAuthChange } from "../lib/accountStore";
 
 // Note: lib/categoryOptions.ts has its own, deliberately different
@@ -127,6 +128,8 @@ function ViewBookingSheet({
   onClose: () => void;
 }) {
   const open = !!booking;
+  // Nothing behind the sheet can be scrolled or touched while it's open.
+  useSheetLock(open);
   const items = booking ? Object.entries(booking.items) : [];
 
   return (
@@ -175,7 +178,7 @@ function ViewBookingSheet({
         <span style={{ padding: "0 20px 16px", fontSize: 12, color: "#767766" }}>
           {booking?.planSummary}
         </span>
-        <div style={{ overflowY: "auto", padding: "0 20px 32px", display: "flex", flexDirection: "column", gap: 16, flex: "1 1 auto", minHeight: 0 }}>
+        <div style={{ overflowY: "auto", padding: "0 20px 32px", display: "flex", flexDirection: "column", gap: 16, flex: "1 1 auto", minHeight: 0, ...SHEET_SCROLL_STYLE }}>
           <PlanSheetItems items={items} area={booking?.location?.name} time={booking?.time} vibe={booking?.vibe} />
         </div>
       </div>
