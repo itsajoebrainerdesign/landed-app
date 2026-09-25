@@ -503,7 +503,10 @@ export default function Home() {
       <div
         style={{
           height: "100dvh",
-          paddingBottom: 120,
+          // Clears the nav bar (92px + the home-indicator area it pads
+          // itself with) and leaves a gap above it: 28px on phones with a
+          // home indicator as well as without.
+          paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 120px)",
           width: "100vw",
           marginLeft: "calc(50% - 50vw)",
           marginRight: "calc(50% - 50vw)",

@@ -73,6 +73,12 @@ const CANDIDATES_PER_CATEGORY = 5;
 const CACHE_TTL_MS = 30 * 60 * 1000;
 const CACHE_MAX_ENTRIES = 500;
 
+// TESTING: per-user and per-guest search limits are switched off while
+// the app is being tested, so every search runs. Set this back to true
+// before sharing the app more widely — each uncached search costs about
+// $1.20 (Claude + Google Places). The per-IP flood guard below stays on.
+const SEARCH_LIMITS_ON = false;
+
 // Uncached live searches per signed-in user.
 const LIMIT_PER_HOUR = 10;
 const LIMIT_PER_DAY = 30;
@@ -163,8 +169,10 @@ async function handlePlan(input: PlanRequest, ip: string): Promise<PlanResponse>
       userId = null;
     }
   }
-  const quotaError = supabase && userId ? await consumeQuota(supabase, userId) : consumeGuestQuota(ip);
-  if (quotaError) return staticResponse([quotaError]);
+  if (SEARCH_LIMITS_ON) {
+    const quotaError = supabase && userId ? await consumeQuota(supabase, userId) : consumeGuestQuota(ip);
+    if (quotaError) return staticResponse([quotaError]);
+  }
 
   const value = buildPlan(input);
   writeCache(key, value);
