@@ -27,6 +27,9 @@ export type CategoryOption = {
   // flip this to true once a venue's platform (e.g. a Booking.com or
   // OpenTable-backed listing) is genuinely integrated.
   hasApiBooking?: boolean;
+  // Budget tier, set by the live search. Missing on the static catalog,
+  // where it's worked out from price (see budgetTierOf).
+  budget?: BudgetKey;
 };
 
 export const CATEGORY_ORDER: CategoryKey[] = ["stay", "restaurant", "attractions", "bar", "live", "parking"];
@@ -141,23 +144,40 @@ export function pickForVibe(cat: CategoryKey, vibe: VibeKey, catalog: Catalog = 
   const vibeMatch = byDistance.find((o) => o.vibes.includes(vibe));
   return (vibeMatch || byDistance[0]).id;
 }
-// Budget level (Low/Luxury) always wins over vibe-matching, and ignores
-// vibe entirely, for every category — otherwise vibe tags could quietly
-// hand a friends or date-night search pricier "Low" picks than a solo
-// search gets, just because of which options happened to be tagged for
-// that vibe. Everyone who picks Low gets the genuinely cheapest options,
-// across the whole plan. Modest has no price steering — it falls back to
-// the normal closeness-and-vibe pick.
+// Each budget tier is its own pool: the plan picks from the chosen tier,
+// and the swap sheet offers the rest of that tier. Live results carry a
+// tier from the search; the static catalog's is worked out from price —
+// cheapest third low, middle third modest, priciest third luxury.
+export function budgetTierOf(option: CategoryOption, all: CategoryOption[]): BudgetKey {
+  if (option.budget) return option.budget;
+  const byPrice = [...all].sort((a, b) => parsePrice(a.price) - parsePrice(b.price));
+  const i = byPrice.findIndex((o) => o.id === option.id);
+  if (i < byPrice.length / 3) return "low";
+  if (i >= (byPrice.length * 2) / 3) return "luxury";
+  return "modest";
+}
+
+// The options for a category at a budget. If the area has nothing at that
+// tier, fall back to the nearest tier rather than leave the card empty.
+const TIER_FALLBACK: Record<BudgetKey, BudgetKey[]> = {
+  low: ["low", "modest", "luxury"],
+  modest: ["modest", "low", "luxury"],
+  luxury: ["luxury", "modest", "low"],
+};
+export function optionsForBudget(cat: CategoryKey, budget: BudgetKey, catalog: Catalog = CATEGORY_OPTIONS): CategoryOption[] {
+  const all = catalog[cat];
+  for (const tier of TIER_FALLBACK[budget]) {
+    const pool = all.filter((o) => budgetTierOf(o, all) === tier);
+    if (pool.length > 0) return pool;
+  }
+  return all;
+}
+
+// Within the budget tier, the usual closest-match-preferring-vibe pick.
 export function pickForBudget(cat: CategoryKey, vibe: VibeKey, budget: BudgetKey, catalog: Catalog = CATEGORY_OPTIONS): string {
-  const options = catalog[cat];
-  if (options.length === 0) return "";
-  if (budget === "low") {
-    return [...options].sort((a, b) => parsePrice(a.price) - parsePrice(b.price))[0].id;
-  }
-  if (budget === "luxury") {
-    return [...options].sort((a, b) => parsePrice(b.price) - parsePrice(a.price))[0].id;
-  }
-  return pickForVibe(cat, vibe, catalog);
+  const pool = optionsForBudget(cat, budget, catalog);
+  if (pool.length === 0) return "";
+  return pickForVibe(cat, vibe, { ...catalog, [cat]: pool });
 }
 export function computePicks(vibe: VibeKey, budget: BudgetKey, catalog: Catalog = CATEGORY_OPTIONS): Record<CategoryKey, string> {
   const result = {} as Record<CategoryKey, string>;

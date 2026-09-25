@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { TimeKey, VibeKey } from "../../lib/constants";
-import { TIME_OPTIONS, VIBE_OPTIONS } from "../../lib/constants";
+import type { TimeKey, VibeKey, BudgetKey } from "../../lib/constants";
+import { TIME_OPTIONS, VIBE_OPTIONS, BUDGET_OPTIONS } from "../../lib/constants";
 import type { CategoryKey, CategoryOption } from "../../lib/categoryOptions";
 import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_OPTIONS } from "../../lib/categoryOptions";
 import { GALWAY, haversineKm } from "../../lib/geo";
@@ -75,12 +75,13 @@ const MAX_DISTANCE_KM: Record<CategoryKey, number> = {
 };
 
 const MODEL = "claude-opus-5";
-// Up to this many per category across all three timeframes combined
-// (each one costs a Google Places lookup)…
-const CANDIDATES_PER_CATEGORY = 6;
-// …and at most this many kept per category per timeframe: the plan's pick
-// plus 3 swaps.
-const OPTIONS_PER_CATEGORY = 4;
+// Every venue is labelled with a budget tier, and each tier needs its own
+// pool — the plan's pick plus 3 swaps at that budget. So: about this many
+// per tier per category (across all three timeframes)…
+const PER_TIER = 4;
+const BUDGET_KEYS = BUDGET_OPTIONS.map((o) => o.key);
+// …and at most this many kept per tier, per category, per timeframe.
+const OPTIONS_PER_TIER = 4;
 const CACHE_TTL_MS = 30 * 60 * 1000;
 const CACHE_MAX_ENTRIES = 500;
 
@@ -320,6 +321,7 @@ type Candidate = {
   price_gbp: number;
   vibes: VibeKey[];
   times: TimeKey[];
+  budget: BudgetKey;
   highlight: string;
 };
 
@@ -338,7 +340,7 @@ const SUBMIT_TOOL: Anthropic.Beta.BetaTool = {
         items: {
           type: "object",
           additionalProperties: false,
-          required: ["category", "name", "price_gbp", "vibes", "times", "highlight"],
+          required: ["category", "name", "price_gbp", "budget", "vibes", "times", "highlight"],
           properties: {
             category: { type: "string", enum: [...CATEGORY_ORDER] },
             name: {
@@ -353,6 +355,11 @@ const SUBMIT_TOOL: Anthropic.Beta.BetaTool = {
               type: "array",
               items: { type: "string", enum: VIBE_OPTIONS.map((o) => o.key) },
               description: "Every vibe this venue genuinely suits.",
+            },
+            budget: {
+              type: "string",
+              enum: BUDGET_KEYS,
+              description: "The budget tier this venue belongs to for its category, relative to the area: low (cheap or free), modest (mid-range), luxury (premium).",
             },
             times: {
               type: "array",
@@ -372,7 +379,15 @@ const SUBMIT_TOOL: Anthropic.Beta.BetaTool = {
 
 const SYSTEM_PROMPT = `You find real, currently operating venues for Landed, an app that builds a night or day out.
 
-For the requested location and vibe, use web search to find up to ${CANDIDATES_PER_CATEGORY} strong candidates in EACH of these categories, covering three timeframes at once — the app lets the person switch between them instantly, so this one search has to serve all three:
+For the requested location and vibe, find strong candidates in EACH of these categories, for all three budget tiers and all three timeframes at once — the app lets the person switch budget and timeframe instantly, so this one search has to serve them all.
+
+Budget tiers (label every venue with one, relative to the area):
+- low: cheap or free options
+- modest: mid-range
+- luxury: premium, special-occasion options
+Aim for ${PER_TIER} venues per tier in every category (about ${PER_TIER * BUDGET_KEYS.length} per category) where the area has them — the person swaps between options within their chosen tier, so each tier needs its own choices.
+
+Timeframes:
 - now: open and worth going to at the current local time
 - tonight: this evening, local time
 - tomorrow: tomorrow, day or evening
@@ -385,8 +400,8 @@ Guidance:
   - Aim for walking distance: within about 1 km of the pin.
   - Only if a category has nothing good that close, widen to 3 km. Never suggest anything further than ${MAX_DISTANCE_KM.restaurant} km for restaurants, bars and parking, ${MAX_DISTANCE_KM.live} km for live and attractions, or ${MAX_DISTANCE_KM.stay} km for stays — anything beyond is discarded.
   - Among good options, closer is better.
-- Include a spread of price points (budget through premium) in every category where the area has them, so the user's budget setting has real choices.
-- "times" lists every timeframe a venue suits. Most places suit several; pick venues so that each timeframe ends up with about ${OPTIONS_PER_CATEGORY} good options per category where the area has them (the plan's pick plus 3 alternatives) — e.g. a daytime café for now, a late bar for tonight.
+- "times" lists every timeframe a venue suits. Most places suit several; pick venues so that each tier still has a few options for each timeframe — e.g. a daytime café for now, a late bar for tonight.
+- Keep "highlight" short; with this many venues, brevity matters.
 - "live" means live music, comedy, theatre, or similar. Favour venues with something actually on in a timeframe, and only list the timeframes the show is on. Put the act or show in "highlight", with the day if it's only on one ("Tomorrow: jazz trio").
 - Only include places that are currently operating. Skip anything permanently closed.
 - "name" must be the venue's business name exactly as Google Maps would list it, since each one is verified against Google Places.
@@ -499,7 +514,7 @@ function sanitizeCandidates(input: unknown): Candidate[] {
   const out: Candidate[] = [];
   for (const v of venues) {
     if (!v || typeof v !== "object") continue;
-    const { category, name, price_gbp, vibes, times, highlight } = v as Record<string, unknown>;
+    const { category, name, price_gbp, vibes, times, budget, highlight } = v as Record<string, unknown>;
     if (!CATEGORY_ORDER.includes(category as CategoryKey)) continue;
     if (typeof name !== "string" || !name.trim()) continue;
     out.push({
@@ -512,6 +527,7 @@ function sanitizeCandidates(input: unknown): Candidate[] {
       times: Array.isArray(times) && times.some((t) => TIME_KEYS.includes(t as TimeKey))
         ? (times.filter((t) => TIME_KEYS.includes(t as TimeKey)) as TimeKey[])
         : [...TIME_KEYS],
+      budget: BUDGET_KEYS.includes(budget as BudgetKey) ? (budget as BudgetKey) : "modest",
       highlight: typeof highlight === "string" ? highlight.trim().slice(0, 40) : "",
     });
   }
@@ -857,6 +873,7 @@ function rankAndAssemble(verified: Verified[], input: PlanRequest): LiveOptions 
       phone: place.internationalPhoneNumber || "",
       vibes,
       meta,
+      budget: candidate.budget,
     };
 
     for (const time of candidate.times) {
@@ -870,11 +887,17 @@ function rankAndAssemble(verified: Verified[], input: PlanRequest): LiveOptions 
     }
   }
   // Closest first (matching how the static catalog reads in the swap
-  // sheet), keeping the nearest OPTIONS_PER_CATEGORY.
+  // sheet), keeping the nearest OPTIONS_PER_TIER in each budget tier.
   for (const byCat of Object.values(options)) {
     if (!byCat) continue;
     for (const cat of Object.keys(byCat) as CategoryKey[]) {
-      byCat[cat] = byCat[cat]!.sort((a, b) => parseFloat(a.meta[0]) - parseFloat(b.meta[0])).slice(0, OPTIONS_PER_CATEGORY);
+      const sorted = byCat[cat]!.sort((a, b) => parseFloat(a.meta[0]) - parseFloat(b.meta[0]));
+      const perTier = new Map<string, number>();
+      byCat[cat] = sorted.filter((o) => {
+        const n = perTier.get(o.budget ?? "modest") ?? 0;
+        perTier.set(o.budget ?? "modest", n + 1);
+        return n < OPTIONS_PER_TIER;
+      });
     }
   }
   return options;

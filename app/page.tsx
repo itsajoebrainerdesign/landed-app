@@ -32,7 +32,7 @@ function resultsFromSavedItems(items: Record<string, SavedItem>): LiveResults {
   }
   return { now: byCat, tonight: byCat, tomorrow: byCat };
 }
-import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_OPTIONS, computePicks, mergeCatalog } from "./lib/categoryOptions";
+import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_OPTIONS, computePicks, mergeCatalog, optionsForBudget } from "./lib/categoryOptions";
 import { mapsUrl, ticketSearchUrl, bookingSearchUrl } from "./lib/urls";
 import { telHref } from "./lib/format";
 import { PinIcon, PhoneIcon, PhotoIcon } from "./components/icons";
@@ -931,7 +931,10 @@ export default function Home() {
           </div>
           <div className="overflow-y-auto px-5 pb-8 flex flex-col gap-4" style={{ flex: "1 1 auto", minHeight: 0 }}>
             {openSwap &&
-              catalog[openSwap]
+              // Swaps come from the same budget tier as the plan: other
+              // luxury options when Budget is Luxury, other low-cost ones
+              // when it's Low.
+              optionsForBudget(openSwap, budget, catalog)
                 .filter((o) => o.id !== picks[openSwap])
                 // The plan's pick plus up to 3 swaps.
                 .slice(0, 3)
