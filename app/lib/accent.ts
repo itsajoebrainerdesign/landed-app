@@ -6,15 +6,29 @@ export const DEFAULT_ACCENT = "#DEEB3A";
 const KEY = "landed_accent";
 const HEX_RE = /^#[0-9a-f]{6}$/i;
 
-export const ACCENT_PRESETS: { name: string; hex: string }[] = [
-  { name: "Lime", hex: DEFAULT_ACCENT },
-  { name: "Mint", hex: "#7FE0B0" },
-  { name: "Sky", hex: "#8CCBF5" },
-  { name: "Lilac", hex: "#C7A8F5" },
-  { name: "Blush", hex: "#F5A8C4" },
-  { name: "Peach", hex: "#F7B98A" },
-  { name: "Sunshine", hex: "#F7D84A" },
-];
+// The hue slider keeps the default's saturation and lightness and only
+// turns the hue, so every choice is as bright as the original lime.
+const SATURATION = 0.82;
+const LIGHTNESS = 0.575;
+
+export function hueToHex(hue: number): string {
+  const c = (1 - Math.abs(2 * LIGHTNESS - 1)) * SATURATION;
+  const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+  const m = LIGHTNESS - c / 2;
+  const [r, g, b] =
+    hue < 60 ? [c, x, 0] : hue < 120 ? [x, c, 0] : hue < 180 ? [0, c, x] : hue < 240 ? [0, x, c] : hue < 300 ? [x, 0, c] : [c, 0, x];
+  const hex = (v: number) => Math.round((v + m) * 255).toString(16).padStart(2, "0");
+  return `#${hex(r)}${hex(g)}${hex(b)}`.toUpperCase();
+}
+
+export function hexToHue(hex: string): number {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b);
+  const d = max - Math.min(r, g, b);
+  if (d === 0) return 0;
+  const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return Math.round((h * 60 + 360) % 360);
+}
 
 export function getAccent(): string {
   try {
