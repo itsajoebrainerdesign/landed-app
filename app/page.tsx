@@ -554,9 +554,10 @@ export default function Home() {
       </div>
 
       {locationChosen && mode === "search" && (
-      // minHeight: a full screen, so even with few or no results the
-      // section's top can scroll (and snap) to the top of the screen.
-      <div ref={planRef} className="flex flex-col" style={{ paddingTop: "calc(5vh + 60px)", minHeight: "100dvh" }}>
+      // minHeight: a full screen minus <main>'s pb-32 (8rem) below it, so
+      // with few or no results the furthest you can scroll puts the
+      // section's top exactly at the top of the screen — no further.
+      <div ref={planRef} className="flex flex-col" style={{ paddingTop: "calc(5vh + 60px)", minHeight: "calc(100dvh - 8rem)" }}>
         <div className="flex items-center gap-2.5" style={{ marginBottom: 20 }}>
           <span className="font-semibold text-[18px] text-ink leading-none">Your Plan ↘</span>
         </div>
@@ -692,7 +693,7 @@ export default function Home() {
       )}
 
       {locationChosen && mode === "explore" && (
-        <div ref={planRef} className="flex flex-col gap-3.5" style={{ paddingTop: "calc(5vh + 60px)", minHeight: "100dvh" }}>
+        <div ref={planRef} className="flex flex-col gap-3.5" style={{ paddingTop: "calc(5vh + 60px)", minHeight: "calc(100dvh - 8rem)" }}>
           <span className="font-semibold text-[18px] text-ink leading-none" style={{ marginBottom: 6, display: "block" }}>Explore plans↘</span>
           {/* See the matching comment on Your Plan's summary (the
               planSummary span above, in the search-mode block) — this
