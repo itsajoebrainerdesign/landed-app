@@ -6,11 +6,9 @@ export function formatDate(iso: string) {
   }
 }
 
-// tel: link for a venue phone number. Live venues carry international
-// numbers ("+44 20 …"); the static Galway catalog uses Irish national
-// format ("091 …"), which gets +353 in place of the leading 0.
+// tel: link for a venue phone number. Venues carry international numbers
+// from Google ("+44 20 …"); anything else is dialled as written.
 export function telHref(phone: string) {
   const digits = phone.replace(/\D/g, "");
-  if (phone.trim().startsWith("+")) return "tel:+" + digits;
-  return "tel:+353" + digits.slice(1);
+  return phone.trim().startsWith("+") ? "tel:+" + digits : "tel:" + digits;
 }

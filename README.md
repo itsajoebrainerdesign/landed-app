@@ -18,10 +18,9 @@ drink, see something live, and park — around a place and a vibe.
   search) finds current candidates, Google Places verifies each one is
   real and open, and the results replace the built-in catalog. Open to
   everyone; rate-limited per user (signed in) or per IP address (guests).
-- **Built-in Galway catalog** (`app/lib/categoryOptions.ts`): the pilot
-  region's static venues. Used as the fallback near Galway while live
-  results load, for signed-out visitors, or if the live search fails.
-  Away from Galway there is no fallback — the plan is live results only.
+- **No built-in venues**: every venue comes from a live search around
+  the place the person chose (`app/lib/categoryOptions.ts` holds only
+  the venue shape, category styles and the pick logic).
 - **Accounts** (Supabase): sign up, log in, log out, password reset. The
   Account page's personal details and the Bookings page's drafts and
   confirmed plans are stored per user. Signed-out visitors can still make
@@ -185,7 +184,7 @@ redeploy. Without it, results are cached per server instance only.
 - `app/auth/callback/route.ts` — where Supabase email links land
 - `app/components/` — `LiveMap`, `PlanItemCard`, `QuickDropdown`, icons
 - `app/lib/` — `bookingsStore` / `accountStore` (data, Supabase or this
-  device), `categoryOptions` (Galway catalog + pick logic), `geo`
+  device), `categoryOptions` (venue shape + pick logic), `geo`
   (locations), `urls` (outbound links), `supabase/` (clients)
 - `supabase/schema.sql` — database tables and security rules
 

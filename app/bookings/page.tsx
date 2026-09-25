@@ -6,93 +6,8 @@ import { VIBE_OPTIONS, BUDGET_OPTIONS, CTA_GRADIENT, normalizeBudget } from "../
 import { mapsUrl, ticketSearchUrl, bookingSearchUrl, stayBookingUrl } from "../lib/urls";
 import { formatDate } from "../lib/format";
 import type { SavedBooking } from "../lib/bookingsStore";
-import { listBookings, writeDeviceBookings } from "../lib/bookingsStore";
+import { listBookings } from "../lib/bookingsStore";
 import { onAuthChange } from "../lib/accountStore";
-
-// Seeded the first time a signed-out guest opens this page with nothing
-// saved on their device yet, so the two sections below aren't empty by
-// default — same shape as a real saved entry (including resolved items),
-// so both "Edit" and "View" work exactly as they would on something you
-// actually booked. Never seeded into a real account (and dropped, not
-// imported, when a guest signs in — see bookingsStore.ts).
-const EXAMPLE_BOOKINGS: SavedBooking[] = [
-  {
-    id: "example-1",
-    createdAt: new Date(Date.now() - 5 * 86400000).toISOString(),
-    planSummary: "Here's your night out in Galway tonight with a stay to round it off.",
-    picks: {
-      stay: "stay-2",
-      restaurant: "restaurant-1",
-      attractions: "attractions-1",
-      bar: "bar-2",
-      live: "live-2",
-      parking: "parking-3",
-    },
-    items: {
-      stay: { tag: "STAY", tagBg: "#E7DEF7", title: "The Harbour Inn", price: "£185.00", unit: "per night" },
-      restaurant: { tag: "RESTAURANT", tagBg: "#F0CFCF", title: "Kai", price: "£45.00", unit: "per person" },
-      attractions: { tag: "ATTRACTIONS", tagBg: "#D6E8F5", title: "Galway City Museum", price: "£8.00", unit: "per person" },
-      bar: { tag: "LATE BAR", tagBg: "#F1F3C4", title: "The Kasbah", price: "£11.00", unit: "avg. per drink" },
-      live: { tag: "LIVE", tagBg: "#F6DCCB", title: "The Róisín Dubh", price: "£22.00", unit: "per person" },
-      parking: { tag: "PARKING", tagBg: "#DCEAE3", title: "Parking — Eyre Square", price: "£1.00", unit: "per hour" },
-    },
-    vibe: "nightout",
-    time: "tonight",
-    budget: "modest",
-    removedCategories: [],
-    confirmed: true,
-  },
-  {
-    id: "example-2",
-    createdAt: new Date(Date.now() - 12 * 86400000).toISOString(),
-    planSummary: "Here's your date night in Galway now with a stay to round it off.",
-    picks: {
-      stay: "stay-6",
-      restaurant: "restaurant-3",
-      attractions: "attractions-1",
-      bar: "bar-2",
-      live: "live-9",
-      parking: "parking-3",
-    },
-    items: {
-      stay: { tag: "STAY", tagBg: "#E7DEF7", title: "The g Hotel", price: "£275.00", unit: "per night" },
-      restaurant: { tag: "RESTAURANT", tagBg: "#F0CFCF", title: "Loam", price: "£85.00", unit: "per person" },
-      attractions: { tag: "ATTRACTIONS", tagBg: "#D6E8F5", title: "Galway City Museum", price: "£8.00", unit: "per person" },
-      bar: { tag: "LATE BAR", tagBg: "#F1F3C4", title: "The Kasbah", price: "£11.00", unit: "avg. per drink" },
-      live: { tag: "LIVE", tagBg: "#F6DCCB", title: "Rollercoaster Comedy Club", price: "£16.00", unit: "per person" },
-      parking: { tag: "PARKING", tagBg: "#DCEAE3", title: "Parking — Eyre Square", price: "£1.00", unit: "per hour" },
-    },
-    vibe: "date",
-    time: "now",
-    budget: "luxury",
-    removedCategories: [],
-    confirmed: true,
-  },
-  {
-    id: "example-3",
-    createdAt: new Date(Date.now() - 1 * 86400000).toISOString(),
-    planSummary: "Here's your family day out in Galway tomorrow with a stay to round it off.",
-    picks: {
-      stay: "stay-2",
-      restaurant: "restaurant-8",
-      attractions: "attractions-3",
-      live: "live-10",
-      parking: "parking-3",
-    },
-    items: {
-      stay: { tag: "STAY", tagBg: "#E7DEF7", title: "The Harbour Inn", price: "£185.00", unit: "per night" },
-      restaurant: { tag: "RESTAURANT", tagBg: "#F0CFCF", title: "Brasserie on the Corner", price: "£32.00", unit: "per person" },
-      attractions: { tag: "ATTRACTIONS", tagBg: "#D6E8F5", title: "Leisureland Salthill", price: "£10.00", unit: "per person" },
-      live: { tag: "LIVE", tagBg: "#F6DCCB", title: "Galway Arts Festival — Day Stage", price: "£14.00", unit: "per person" },
-      parking: { tag: "PARKING", tagBg: "#DCEAE3", title: "Parking — Eyre Square", price: "£1.00", unit: "per hour" },
-    },
-    vibe: "family",
-    time: "tomorrow",
-    budget: "modest",
-    removedCategories: ["bar"],
-    confirmed: false,
-  },
-];
 
 // Note: lib/categoryOptions.ts has its own, deliberately different
 // parsePrice — that one returns Infinity for an unparseable price (since
@@ -159,7 +74,7 @@ function BookingCard({
         </div>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        <span className="font-semibold text-[15px] leading-snug text-ink">{booking.location?.label ?? "Galway, Ireland"}</span>
+        <span className="font-semibold text-[15px] leading-snug text-ink">{booking.location?.label ?? ""}</span>
         <span className="text-[12px]" style={{ color: "#767766" }}>
           {VIBE_OPTIONS.find((o) => o.key === booking.vibe)?.label || booking.vibe} ·{" "}
           {BUDGET_OPTIONS.find((o) => o.key === normalizeBudget(booking.budget))?.label}
@@ -203,8 +118,8 @@ function BookingCard({
   );
 }
 
-// `area` is the booking's location name (Galway for plans saved before
-// the map search could move a plan); `time` sets a stay's dates.
+// `area` is the booking's location name (if it has one); `time` sets a
+// stay's dates.
 function linkForCategory(cat: string, name: string, area?: string, time?: string, pos?: { lat?: number; lng?: number }) {
   if (cat === "stay") return { href: stayBookingUrl({ title: name, ...pos }, area, time), label: "Book ↗" };
   if (cat === "attractions" || cat === "live") return { href: ticketSearchUrl(name, area), label: "Get Tickets ↗" };
@@ -321,14 +236,9 @@ export default function Bookings() {
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      const { bookings: list, source, error } = await listBookings();
+      const { bookings: list, error } = await listBookings();
       if (cancelled) return;
-      if (source === "device" && !list) {
-        writeDeviceBookings(EXAMPLE_BOOKINGS);
-        setBookings(EXAMPLE_BOOKINGS);
-      } else {
-        setBookings(list || []);
-      }
+      setBookings(list || []);
       setLoadError(error ?? null);
     }
     load().catch((err) => {

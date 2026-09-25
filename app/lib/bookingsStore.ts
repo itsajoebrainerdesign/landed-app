@@ -48,8 +48,7 @@ export type SavedBooking = {
   budget: string;
   removedCategories: string[];
   confirmed: boolean;
-  // Where the plan is. Missing on plans saved before the map search could
-  // move the plan — those are Galway.
+  // Where the plan is. Missing on plans saved before plans had locations.
   location?: PlanLocation;
   // The search results behind the plan, so reopening it needs no new
   // search. Missing on older plans (they search again when opened).
@@ -139,8 +138,7 @@ export function newBookingId(): string {
 
 // ── Device storage ──────────────────────────────────────────────────────
 
-// null means "nothing has ever been saved here" (vs. an empty list), which
-// the Bookings page uses to decide whether to seed its examples.
+// null means "nothing has ever been saved here" (vs. an empty list).
 export function readDeviceBookings(): SavedBooking[] | null {
   try {
     const raw = localStorage.getItem(LOCAL_KEY);

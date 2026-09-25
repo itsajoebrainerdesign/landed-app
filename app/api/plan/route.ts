@@ -4,18 +4,18 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TimeKey, VibeKey, BudgetKey } from "../../lib/constants";
 import { TIME_OPTIONS, VIBE_OPTIONS, BUDGET_OPTIONS } from "../../lib/constants";
 import type { CategoryKey, CategoryOption } from "../../lib/categoryOptions";
-import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_OPTIONS } from "../../lib/categoryOptions";
-import { GALWAY, haversineKm } from "../../lib/geo";
+import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_STYLE } from "../../lib/categoryOptions";
+import { haversineKm } from "../../lib/geo";
 import { getServerSupabase } from "../../lib/supabase/server";
 import { getAdminSupabase } from "../../lib/supabase/admin";
 
 /**
  * POST /api/plan
  *
- * Body: { location?: string, lat?: number, lng?: number,
+ * Body: { location?: string, lat: number, lng: number,
  *         vibe: "nightout" | "date" | "family" | "solo" }
- * (lat/lng default to Galway city centre. A `time` field is accepted but
- * ignored — one search covers every timeframe.)
+ * (lat/lng — the pin on the map — are required. A `time` field is
+ * accepted but ignored — one search covers every timeframe.)
  *
  * Response: a stream of JSON lines (NDJSON), so the plan fills in as it's
  * found instead of after one long wait:
@@ -73,7 +73,8 @@ type CategoryResults = Partial<Record<CategoryKey, CategoryOption[]>>;
 type LiveOptions = Partial<Record<TimeKey, CategoryResults>>;
 const TIME_KEYS = TIME_OPTIONS.map((o) => o.key);
 
-const DEFAULT_LOCATION = "Galway, Ireland";
+// How the pin is described to the AI when the app doesn't send a name.
+const UNNAMED_LOCATION = "the pin on the map";
 // Results are local to the exact point on the map: walking distance first,
 // and never further than this. Stays and car parks are sparser in quiet
 // areas, so they get a little more room.
@@ -175,16 +176,13 @@ function parseRequest(body: unknown): PlanRequest | string {
   if (location !== undefined && (typeof location !== "string" || location.trim().length === 0 || location.length > 100)) {
     return `"location" must be a non-empty string of at most 100 characters.`;
   }
-  const hasCoords = lat !== undefined || lng !== undefined;
-  if (hasCoords) {
-    if (typeof lat !== "number" || typeof lng !== "number" || !isFinite(lat) || !isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
-      return `"lat" and "lng" must both be valid coordinates.`;
-    }
+  if (typeof lat !== "number" || typeof lng !== "number" || !isFinite(lat) || !isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+    return `"lat" and "lng" (the pin on the map) are required and must be valid coordinates.`;
   }
   return {
-    location: (location as string | undefined)?.trim() || DEFAULT_LOCATION,
-    lat: hasCoords ? (lat as number) : GALWAY.lat,
-    lng: hasCoords ? (lng as number) : GALWAY.lng,
+    location: (location as string | undefined)?.trim() || UNNAMED_LOCATION,
+    lat,
+    lng,
     vibe: vibe as VibeKey,
   };
 }
@@ -1149,7 +1147,7 @@ async function verifyWithGooglePlaces(
   return verified;
 }
 
-const NAME_STOPWORDS = new Set(["the", "a", "an", "and", "of", "at", "in", "on", "bar", "pub", "hotel", "restaurant", "cafe", "galway", "&"]);
+const NAME_STOPWORDS = new Set(["the", "a", "an", "and", "of", "at", "in", "on", "bar", "pub", "hotel", "restaurant", "cafe", "&"]);
 function nameTokens(name: string): Set<string> {
   return new Set(
     name
@@ -1187,7 +1185,7 @@ function assemble(verified: Verified[], input: PlanRequest): PlanData {
   const seen = new Set<string>();
   for (const { candidate, place, distanceKm } of verified) {
     const cat = candidate.category;
-    const template = CATEGORY_OPTIONS[cat][0];
+    const template = CATEGORY_STYLE[cat];
     const meta = [`${(distanceKm * 0.621371).toFixed(1)} mi`];
     if (typeof place.rating === "number") meta.push(`★ ${place.rating.toFixed(1)} Reviews`);
     if (candidate.highlight) meta.push(candidate.highlight);

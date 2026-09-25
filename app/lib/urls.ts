@@ -1,16 +1,18 @@
 // Every outbound link in the app — maps, ticket search, booking search,
-// and the Booking.com affiliate link for stays — funnels through here. `area` is the plan's location name (e.g.
-// "Galway", or wherever the map search moved the plan); it defaults to
-// Galway, the pilot region, for anything saved before locations existed.
+// and the Booking.com affiliate link for stays — funnels through here.
+// `area` is the plan's location name (e.g. "St Albans"), added to searches
+// so they find the right branch; it's left off when unknown.
 
-export function mapsUrl(name: string, area = "Galway") {
-  return "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(name + " " + area);
+const withArea = (name: string, area?: string) => (area ? `${name} ${area}` : name);
+
+export function mapsUrl(name: string, area?: string) {
+  return "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(withArea(name, area));
 }
-export function ticketSearchUrl(name: string, area = "Galway") {
-  return "https://www.google.com/search?q=" + encodeURIComponent(name + " tickets " + area);
+export function ticketSearchUrl(name: string, area?: string) {
+  return "https://www.google.com/search?q=" + encodeURIComponent(withArea(name, area) + " tickets");
 }
-export function bookingSearchUrl(name: string, area = "Galway") {
-  return "https://www.google.com/search?q=" + encodeURIComponent(name + " " + area + " booking");
+export function bookingSearchUrl(name: string, area?: string) {
+  return "https://www.google.com/search?q=" + encodeURIComponent(withArea(name, area) + " booking");
 }
 
 // ── Affiliate booking links ──────────────────────────────────────────────
@@ -36,11 +38,11 @@ function localDay(offsetDays: number): string {
 // (it falls back to its homepage), so a stay with a map position opens
 // the results centred on it, closest first — the hotel is at or near the
 // top when Booking.com sells it (Travelodge and Premier Inn don't; then
-// it's the nearest alternatives). Without a position (the static Galway
-// catalog), it searches the town.
+// it's the nearest alternatives). Without a position (older saved plans),
+// it searches the area by name.
 export function stayBookingUrl(
   stay: { title: string; lat?: number; lng?: number },
-  area = "Galway",
+  area?: string,
   time: string = "tonight"
 ) {
   const checkinOffset = time === "tomorrow" ? 1 : 0;
@@ -52,7 +54,7 @@ export function stayBookingUrl(
     params.set("dest_type", "latlong");
     params.set("order", "distance_from_search");
   } else {
-    params.set("ss", area);
+    params.set("ss", area ? `${stay.title}, ${area}` : stay.title);
   }
   params.set("checkin", localDay(checkinOffset));
   params.set("checkout", localDay(checkinOffset + 1));
