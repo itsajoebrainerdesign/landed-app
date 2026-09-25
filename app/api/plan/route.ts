@@ -319,7 +319,6 @@ type Candidate = {
   category: CategoryKey;
   name: string;
   price_gbp: number;
-  vibes: VibeKey[];
   times: TimeKey[];
   budget: BudgetKey;
   highlight: string;
@@ -340,7 +339,7 @@ const SUBMIT_TOOL: Anthropic.Beta.BetaTool = {
         items: {
           type: "object",
           additionalProperties: false,
-          required: ["category", "name", "price_gbp", "budget", "vibes", "times", "highlight"],
+          required: ["category", "name", "price_gbp", "budget", "times", "highlight"],
           properties: {
             category: { type: "string", enum: [...CATEGORY_ORDER] },
             name: {
@@ -350,11 +349,6 @@ const SUBMIT_TOOL: Anthropic.Beta.BetaTool = {
             price_gbp: {
               type: "number",
               description: "Typical price in British pounds (GBP) for this category's unit (see instructions), converted if the venue charges in another currency. 0 if free.",
-            },
-            vibes: {
-              type: "array",
-              items: { type: "string", enum: VIBE_OPTIONS.map((o) => o.key) },
-              description: "Every vibe this venue genuinely suits.",
             },
             budget: {
               type: "string",
@@ -424,7 +418,7 @@ async function findCandidatesWithAI(
         // The pin's time zone isn't known here, so give the exact UTC
         // instant and let the model work out local time for the location.
         `Current time: ${new Date().toISOString()} UTC — use the pin's local time for now / tonight / tomorrow.\n` +
-        `Vibe: ${vibeLabel} (${input.vibe})` +
+        `Vibe: ${vibeLabel} (${input.vibe}) — only choose venues that suit this vibe.` +
         nearbyListsPrompt(nearbyLists),
     },
   ];
@@ -509,18 +503,16 @@ async function findCandidatesWithAI(
 function sanitizeCandidates(input: unknown): Candidate[] {
   const venues = (input as { venues?: unknown })?.venues;
   if (!Array.isArray(venues)) return [];
-  const vibeKeys = VIBE_OPTIONS.map((o) => o.key) as string[];
   const out: Candidate[] = [];
   for (const v of venues) {
     if (!v || typeof v !== "object") continue;
-    const { category, name, price_gbp, vibes, times, budget, highlight } = v as Record<string, unknown>;
+    const { category, name, price_gbp, times, budget, highlight } = v as Record<string, unknown>;
     if (!CATEGORY_ORDER.includes(category as CategoryKey)) continue;
     if (typeof name !== "string" || !name.trim()) continue;
     out.push({
       category: category as CategoryKey,
       name: name.trim().slice(0, 120),
       price_gbp: typeof price_gbp === "number" && isFinite(price_gbp) && price_gbp >= 0 ? price_gbp : NaN,
-      vibes: Array.isArray(vibes) ? (vibes.filter((x) => vibeKeys.includes(x as string)) as VibeKey[]) : [],
       // No timeframes given → treat it as suiting all three ("now" is
       // still checked against Google's live opening hours).
       times: Array.isArray(times) && times.some((t) => TIME_KEYS.includes(t as TimeKey))
@@ -856,7 +848,10 @@ function rankAndAssemble(verified: Verified[], input: PlanRequest): LiveOptions 
   for (const { candidate, place, distanceKm } of verified) {
     const cat = candidate.category;
     const template = CATEGORY_OPTIONS[cat][0];
-    const vibes = candidate.vibes.length > 0 ? candidate.vibes : [input.vibe];
+    // Every search is for one vibe, and only venues suiting it are chosen —
+    // so each is tagged with just that vibe (the AI doesn't spend time
+    // tagging vibes nobody asked for).
+    const vibes = [input.vibe];
     const meta = [`${(distanceKm * 0.621371).toFixed(1)} mi`];
     if (typeof place.rating === "number") meta.push(`★ ${place.rating.toFixed(1)} Reviews`);
     if (candidate.highlight) meta.push(candidate.highlight);
