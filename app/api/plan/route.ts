@@ -1184,7 +1184,7 @@ function hoursOf(place: Place): OpeningHours | null {
   return periods?.length ? { periods, utcOffsetMinutes: place.utcOffsetMinutes } : null;
 }
 
-const PHOTOS_PER_VENUE = 3;
+const PHOTOS_PER_VENUE = 1;
 function photosOf(place: Place): VenuePhoto[] | undefined {
   const photos = (place.photos ?? []).slice(0, PHOTOS_PER_VENUE).map((p) => ({
     name: p.name,

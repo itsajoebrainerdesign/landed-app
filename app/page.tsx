@@ -1002,7 +1002,7 @@ export default function Home() {
                       ))}
                     </div>
                     <div style={{ display: "flex" }}>
-                      <VenuePhotoTile kind="exterior" photo={alt.photos?.[0]} height={100} background={alt.tagBg} />
+                      <VenuePhotoTile kind="exterior" photo={alt.photos?.[0]} height={100} background={alt.tagBg} width={800} />
                     </div>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 2 }}>
                       <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>

@@ -37,7 +37,7 @@ export type CategoryOption = {
   // stay.
   lat?: number;
   lng?: number;
-  // Up to three photos from Google Places.
+  // Photos from Google Places (one per venue — each one shown is billed).
   photos?: VenuePhoto[];
 };
 

@@ -56,9 +56,7 @@ export function PlanItemCard({
           ))}
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          {(["exterior", "interior", "crowd"] as const).map((kind, i) => (
-            <VenuePhotoTile key={kind} kind={kind} photo={item.photos?.[i]} height={80} background={item.tagBg} width={200} />
-          ))}
+          <VenuePhotoTile kind="exterior" photo={item.photos?.[0]} height={140} background={item.tagBg} width={800} />
         </div>
       </div>
       <div style={{ padding: 14, display: "flex", alignItems: "center", justifyContent: "space-between", background: "#EAE7DF" }}>
