@@ -872,7 +872,7 @@ export default function Home() {
           style={{ background: bookingsConfirmed ? "#EAE7DF" : CTA_GRADIENT, marginTop: 24 }}
         >
           <span className="font-semibold text-[14px] text-ink">
-            {bookingsConfirmed ? "✓ Plan confirmed" : "Book your plan"}
+            {bookingsConfirmed ? "✓ Plan saved" : "Book your plan"}
           </span>
           <span className="font-semibold text-[16px] leading-none text-ink">↘</span>
         </button>
@@ -1029,14 +1029,21 @@ export default function Home() {
           </div>
           {bookableCategories.length > 0 && (
           <div style={{ padding: "12px 20px 20px", flexShrink: 0, borderTop: "1px solid #EFEFEF" }}>
-            <span style={{ display: "block", fontSize: 12, color: "#767766", marginBottom: 12 }}>
-              Anything with a live booking connection is booked automatically when you confirm — everything else opens a real booking page for you to finish there yourself.
-            </span>
+            {/* Once saved: what happens next. Nothing is booked for them. */}
+            {bookingsConfirmed && (
+              <div role="status" style={{ display: "flex", flexDirection: "column", gap: 4, background: "#F7F5EE", borderRadius: 16, padding: "12px 14px", marginBottom: 12 }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#111111" }}>Your plan is saved in Bookings</span>
+                <span style={{ fontSize: 12, lineHeight: 1.45, color: "#767766" }}>
+                  Now make your bookings: tap each place&rsquo;s button above to book it on its own site. To plan something else, tap + to start a new enquiry.
+                </span>
+              </div>
+            )}
             <button
               onClick={() => {
                 setConfirming(true);
-                // Saved straight away as a confirmed booking (it appears
-                // under "Your bookings"), updating this enquiry's draft.
+                // Saved straight away as a plan under "Your bookings"
+                // (updating this enquiry's draft). The person books each
+                // place themselves from its button.
                 engagedRef.current = true;
                 savePlan({ confirmed: true });
                 window.setTimeout(() => {
@@ -1049,7 +1056,7 @@ export default function Home() {
               style={{ background: bookingsConfirmed ? "#EAE7DF" : CTA_GRADIENT, border: "none", cursor: bookingsConfirmed ? "default" : "pointer", opacity: confirming ? 0.7 : 1 }}
             >
               <span className="font-semibold text-[13px]" style={{ color: "#111111" }}>
-                {bookingsConfirmed ? "✓ Bookings confirmed" : confirming ? "Confirming…" : "Confirm all your bookings"}
+                {bookingsConfirmed ? "✓ Plan saved" : confirming ? "Saving…" : "Save plan"}
               </span>
             </button>
           </div>

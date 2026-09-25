@@ -139,12 +139,27 @@ export function CategoryCarousel({
               scrollSnapStop: "always",
               opacity: position === centred ? 1 : 0.4,
               transition: "opacity 200ms",
+              position: "relative",
             }}
             // The copies are only there for looping — keep them out of the
             // accessibility tree.
             aria-hidden={loops && !inMiddle(position) ? true : undefined}
           >
             <PlanItemCard item={option} area={area} onRemove={onRemove} />
+            {/* The outline marking the card that's in the plan. Drawn inside
+                the card (inset) — the strip clips anything outside it. */}
+            <div
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                inset: 0,
+                borderRadius: 20,
+                boxShadow: "inset 0 0 0 2.5px #111111",
+                opacity: position === centred ? 1 : 0,
+                transition: "opacity 200ms",
+                pointerEvents: "none",
+              }}
+            />
           </div>
         ))}
       </div>
