@@ -49,7 +49,7 @@ import { getBooking, saveBooking, newBookingId } from "./lib/bookingsStore";
 import type { SavedItem, SavedLiveResults } from "./lib/bookingsStore";
 import type { PlanLocation } from "./lib/geo";
 import { NO_LOCATION } from "./lib/geo";
-import { TransitIcon, CarIcon, CampervanIcon } from "./components/icons";
+import { TransitIcon, CarIcon } from "./components/icons";
 
 const WHEN_MENU = (["now", "tonight", "tomorrow"] as TimeKey[]).map(
   (k) => TIME_OPTIONS.find((o) => o.key === k)!
@@ -226,7 +226,7 @@ export default function Home() {
     setPicks(computePicks(next, budget, catalog));
   }
   // A different way of travelling needs a different search (stations vs
-  // car parks, campsites for campervans); results for each are kept, so
+  // car parks); results for each are kept, so
   // switching back is instant.
   function selectTravel(next: TravelMode) {
     if (next === travel) return;
@@ -740,7 +740,7 @@ export default function Home() {
           >
             {TRAVEL_OPTIONS.map((o) => {
               const on = travel === o.key;
-              const Icon = o.key === "transit" ? TransitIcon : o.key === "car" ? CarIcon : CampervanIcon;
+              const Icon = o.key === "transit" ? TransitIcon : CarIcon;
               return (
                 <button
                   key={o.key}

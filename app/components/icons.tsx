@@ -69,13 +69,3 @@ export function CarIcon() {
     </svg>
   );
 }
-export function CampervanIcon() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M2 17V7a2 2 0 0 1 2-2h11l3 4h2a2 2 0 0 1 2 2v6H2z" />
-      <path d="M6 9h4v3H6zM14 9h3" />
-      <circle cx="6.5" cy="17.5" r="1.8" />
-      <circle cx="17" cy="17.5" r="1.8" />
-    </svg>
-  );
-}

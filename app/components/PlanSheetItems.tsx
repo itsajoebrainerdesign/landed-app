@@ -38,7 +38,7 @@ export function PlanSheetItems({
   vibe?: string;
   // The plan's location, for "Getting there".
   place?: { lat?: number; lng?: number; name?: string };
-  // How they're travelling (transit / car / campervan).
+  // How they're travelling (transit / car).
   travel?: string;
 }) {
   // Train, coach, car hire and parking from the travel partners that are
@@ -66,11 +66,6 @@ export function PlanSheetItems({
               </a>
             )}
             <SaveInMapsLink venue={item} area={area} />
-            {cat === "parking" && travel === "campervan" && (
-              <span style={{ fontSize: 12, lineHeight: 1.45, color: "#767766" }}>
-                Chosen for campervans: open-air car parks without height barriers where we can tell. Signs change, so check for height limits and large-vehicle bays before you go.
-              </span>
-            )}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
                 <span style={{ fontWeight: 600, fontSize: 16, color: "#111111" }}>{item.price}</span>

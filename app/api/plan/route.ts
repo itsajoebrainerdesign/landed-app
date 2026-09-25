@@ -87,11 +87,9 @@ const MAX_DISTANCE_KM: Record<CategoryKey, number> = {
   parking: 3,
   stay: 8,
 };
-// By travel mode: campsites are usually out of town, and a car park that
-// takes a campervan may be further out than the nearest multi-storey.
+// By travel mode: stations can be a little further out than car parks.
 function maxDistanceKm(cat: CategoryKey, travel: TravelMode): number {
-  if (travel === "campervan" && cat === "stay") return 25;
-  if (travel === "campervan" && cat === "parking") return 6;
+  if (travel === "transit" && cat === "parking") return 5;
   return MAX_DISTANCE_KM[cat];
 }
 
@@ -409,7 +407,7 @@ function localDate(lng: number): string {
 }
 
 function cacheKey(input: PlanRequest): string {
-  return `v6${partnerChecksSignature()}|${input.lat.toFixed(2)},${input.lng.toFixed(2)}|${input.vibe}|${input.travel}|${localDate(input.lng)}`;
+  return `v7${partnerChecksSignature()}|${input.lat.toFixed(2)},${input.lng.toFixed(2)}|${input.vibe}|${input.travel}|${localDate(input.lng)}`;
 }
 
 function readMemoryCache(key: string): PlanData | null {
@@ -692,6 +690,8 @@ type Candidate = {
   times: TimeKey[];
   budget: BudgetKey;
   highlight: string;
+  // Car parks only: the AI is confident it takes campervans and vans.
+  largeVehicles?: boolean;
 };
 
 const SUBMIT_TOOL: Anthropic.Beta.BetaTool = {
@@ -708,7 +708,7 @@ const SUBMIT_TOOL: Anthropic.Beta.BetaTool = {
         items: {
           type: "object",
           additionalProperties: false,
-          required: ["name", "price_gbp", "budget", "times", "highlight"],
+          required: ["name", "price_gbp", "budget", "times", "highlight", "large_vehicles"],
           properties: {
             name: {
               type: "string",
@@ -731,6 +731,10 @@ const SUBMIT_TOOL: Anthropic.Beta.BetaTool = {
             highlight: {
               type: "string",
               description: "2-4 word selling point, e.g. 'Trad session 9pm', 'Sea view', 'Tasting menu'. No prices or currency.",
+            },
+            large_vehicles: {
+              type: "boolean",
+              description: "Car parks only: true if you're confident it takes campervans, vans and other large vehicles (no height barrier, or large-vehicle bays). false otherwise, and always false for other categories.",
             },
           },
         },
@@ -763,16 +767,10 @@ const LIVE_GUIDANCE = `This category is "live": live music, comedy, theatre or s
 // What the stay and Travel categories mean for how they're travelling.
 function travelGuidance(cat: CategoryKey, travel: TravelMode): string | null {
   if (cat === "parking" && travel === "car") {
-    return `This category is "travel" for someone arriving by car: choose car parks near the pin.`;
+    return `This category is "travel" for someone arriving by car: choose car parks near the pin. Set large_vehicles to true only for a car park you're confident takes campervans, vans or other large vehicles (open-air with no height barrier, or with large-vehicle, coach or motorhome bays); otherwise false.`;
   }
   if (cat === "parking" && travel === "transit") {
     return `This category is "travel" for someone using public transport: choose the train stations, bus stations or stops, tram/underground stops and taxi ranks that are most useful for getting to and around this area. Favour stations with good services and taxi ranks near the centre. price_gbp is a typical single fare (a train or bus into the area, or a short taxi ride); 0 if you can't estimate it. Put the most useful fact in "highlight" (e.g. "Direct to London", "Taxis all night").`;
-  }
-  if (cat === "parking" && travel === "campervan") {
-    return `This category is "travel" for someone driving a campervan or motorhome (typically 2.6–3.2m tall, up to about 7m long). Choose only car parks a campervan can use: open-air car parks with no height barrier, ideally with large-vehicle, coach or motorhome bays. Never choose a multi-storey or underground car park unless you're confident it has bays for large vehicles. Put what makes it suitable in "highlight" (e.g. "No height barrier", "Motorhome bays"). price_gbp is per hour.`;
-  }
-  if (cat === "stay" && travel === "campervan") {
-    return `They're travelling by campervan or motorhome: strongly favour campsites, caravan parks and motorhome stopovers with pitches for campervans (price_gbp per night for a pitch). Only add hotels if there are too few campsites.`;
   }
   return null;
 }
@@ -892,7 +890,7 @@ function sanitizeCandidates(input: unknown, cat: CategoryKey): Candidate[] {
   const out: Candidate[] = [];
   for (const v of venues) {
     if (!v || typeof v !== "object") continue;
-    const { name, price_gbp, times, budget, highlight } = v as Record<string, unknown>;
+    const { name, price_gbp, times, budget, highlight, large_vehicles } = v as Record<string, unknown>;
     if (typeof name !== "string" || !name.trim()) continue;
     out.push({
       category: cat,
@@ -904,6 +902,7 @@ function sanitizeCandidates(input: unknown, cat: CategoryKey): Candidate[] {
         : [...TIME_KEYS],
       budget: BUDGET_KEYS.includes(budget as BudgetKey) ? (budget as BudgetKey) : "modest",
       highlight: typeof highlight === "string" ? highlight.trim().slice(0, 40) : "",
+      largeVehicles: cat === "parking" && large_vehicles === true,
     });
   }
   return out;
@@ -969,14 +968,8 @@ const CATEGORY_TYPE_CHECK: Partial<Record<CategoryKey, (types: string[]) => bool
 };
 
 const TRANSIT_TYPES = ["train_station", "bus_station", "bus_stop", "subway_station", "light_rail_station", "transit_station", "taxi_stand", "taxi_service"];
-const CAMPSITE_TYPES = ["campground", "rv_park"];
 function typeCheckFor(cat: CategoryKey, travel: TravelMode): ((types: string[]) => boolean) | undefined {
   if (cat === "parking" && travel === "transit") return (types) => types.some((t) => TRANSIT_TYPES.includes(t));
-  if (cat === "parking" && travel === "campervan") return (types) => types.some((t) => ["parking", "parking_lot", "rv_park"].includes(t));
-  if (cat === "stay" && travel === "campervan") {
-    const base = CATEGORY_TYPE_CHECK.stay!;
-    return (types) => types.some((t) => CAMPSITE_TYPES.includes(t)) || base(types);
-  }
   return CATEGORY_TYPE_CHECK[cat];
 }
 
@@ -1073,17 +1066,6 @@ function nearbyQueriesFor(cat: CategoryKey, travel: TravelMode): NearbyQuery[] {
       { types: ["taxi_stand", "taxi_service"], rank: "DISTANCE", radiusKm: 3 },
     ];
   }
-  if (cat === "parking" && travel === "campervan") {
-    // No multi-storeys (Google marks some as parking_garage); motorhome
-    // parks count too.
-    return [{ types: ["parking", "rv_park"], excludePrimary: ["parking_garage"], rank: "DISTANCE", radiusKm: maxDistanceKm("parking", travel) }];
-  }
-  if (cat === "stay" && travel === "campervan") {
-    return [
-      { types: CAMPSITE_TYPES, excludePrimary: ["mobile_home_park"], rank: "DISTANCE", radiusKm: maxDistanceKm("stay", travel) },
-      ...NEARBY_QUERIES.stay,
-    ];
-  }
   return NEARBY_QUERIES[cat];
 }
 
@@ -1130,9 +1112,7 @@ async function listCategory(cat: CategoryKey, input: PlanRequest, apiKey: string
         p.location &&
         p.displayName?.text &&
         (!p.businessStatus || p.businessStatus === "OPERATIONAL") &&
-        (p.userRatingCount ?? 0) >= MIN_REVIEWS[cat] &&
-        // Campervans: never a known multi-storey.
-        !(cat === "parking" && input.travel === "campervan" && (p.types ?? []).includes("parking_garage"))
+        (p.userRatingCount ?? 0) >= MIN_REVIEWS[cat]
     );
   // Quiet area: widen once to the category's limit.
   if (usable(places).length < THIN_LIST && queries[0].radiusKm < maxKm) {
@@ -1142,18 +1122,6 @@ async function listCategory(cat: CategoryKey, input: PlanRequest, apiKey: string
   const seenIds = new Set<string>();
   const seenNames = new Set<string>();
   let kept = usable(places);
-  if (cat === "parking" && input.travel === "campervan") {
-    // Names that say it can't take a campervan (Google's own multi-storey
-    // type misses many).
-    kept = kept.filter((p) => !/multi[- ]?stor|underground|motorcycle|motorbike/i.test(p.displayName!.text));
-  }
-  if (cat === "stay" && input.travel === "campervan") {
-    // Campsites first: with a few nearby, hotels are left out entirely.
-    // Residential parks and members-only sites aren't somewhere to stay.
-    kept = kept.filter((p) => !/residential|park homes|scout|naturis/i.test(p.displayName!.text));
-    const campsites = kept.filter((p) => (p.types ?? []).some((t) => CAMPSITE_TYPES.includes(t)));
-    if (campsites.length >= 3) kept = campsites;
-  }
   if (cat === "parking" && input.travel === "transit") {
     // Every station, but only the nearest bus stop and taxi firm/rank —
     // each option list keeps its 4 nearest, so more would push the
@@ -1327,9 +1295,12 @@ function assemble(verified: Verified[], input: PlanRequest): PlanData {
     const meta = [`${(distanceKm * 0.621371).toFixed(1)} mi`];
     if (typeof place.rating === "number") meta.push(`★ ${place.rating.toFixed(1)} Reviews`);
     if (candidate.highlight) meta.push(candidate.highlight);
-    if (cat === "parking" && input.travel !== "transit") {
+    if (cat === "parking" && input.travel === "car") {
+      // Large-vehicle access, from the AI's pick — unless Google says it's
+      // a multi-storey, which the height-limit chip covers instead.
       const height = heightNote(place);
       if (height) meta.push(height);
+      else if (candidate.largeVehicles) meta.push("Large vehicles OK");
     }
     const option: CategoryOption = {
       id: `g-${cat}-${place.id}`,

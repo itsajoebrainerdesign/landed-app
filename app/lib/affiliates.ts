@@ -132,9 +132,7 @@ export type TravelLink = { href: string; label: string; detail: string };
 // runs in Scotland and on a few cross-border routes now, so it's offered
 // for plans in Scotland only.
 // By travel mode: public transport gets trains and coaches, a car gets car
-// hire and parking, and a campervan gets none of these (car-park booking
-// sites are for cars; the Travel card already picks campervan-friendly
-// car parks).
+// hire and parking.
 export function travelLinks(place: { lat?: number; lng?: number; name?: string }, travel: string = "car"): TravelLink[] {
   const hasPos = typeof place.lat === "number" && typeof place.lng === "number" && !(place.lat === 0 && place.lng === 0);
   const inScotland = hasPos && place.lat! >= 55.0 && place.lng! < -1.8;
@@ -153,7 +151,7 @@ export function travelLinks(place: { lat?: number; lng?: number; name?: string }
     [PROGRAMMES.yourparkingspace, "https://www.yourparkingspace.co.uk/", "Pre-book parking", "YourParkingSpace"],
   ];
   const forMode = (label: string) =>
-    travel === "transit" ? label === "Train" || label === "Coach" : travel === "car" ? label === "Car hire" || label === "Pre-book parking" : false;
+    travel === "transit" ? label === "Train" || label === "Coach" : label === "Car hire" || label === "Pre-book parking";
   const links: TravelLink[] = [];
   for (const [programme, destination, label, detail] of options) {
     if (!forMode(label)) continue;
