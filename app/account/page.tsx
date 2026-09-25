@@ -17,6 +17,7 @@ import {
   requestPasswordReset,
   updatePassword,
 } from "../lib/accountStore";
+import { LandedLogo } from "../components/LandedLogo";
 
 // Shared with the Personal information inputs below, so the login form
 // looks identical to the rest of the page.
@@ -153,10 +154,7 @@ export default function Account() {
     // 21px used in page.tsx and bookings/page.tsx — see the longer
     // comment on the Search/Explore toggle in page.tsx for why.
     <main className="w-full min-h-screen bg-white px-[21px] pb-32 flex flex-col gap-10" style={{ paddingTop: 24 }}>
-      {/* Replace with your real logo asset. Plain <img> on purpose: a 30px
-          local icon gains nothing from next/image's optimizer. */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/landed-icon.png" alt="Landed" className="w-[30px] h-auto" />
+      <LandedLogo />
 
       <span className="font-semibold text-[28px] leading-none text-ink">Your account</span>
 

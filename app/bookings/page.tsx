@@ -10,6 +10,7 @@ import { SwipeToRemove } from "../components/SwipeToRemove";
 import { PlanSheetItems } from "../components/PlanSheetItems";
 import { useSheetLock, SHEET_SCROLL_STYLE } from "../lib/useSheetLock";
 import { onAuthChange } from "../lib/accountStore";
+import { LandedLogo } from "../components/LandedLogo";
 
 // Note: lib/categoryOptions.ts has its own, deliberately different
 // parsePrice — that one returns Infinity for an unparseable price (since
@@ -296,10 +297,7 @@ export default function Bookings() {
     // 21px used in page.tsx and account/page.tsx — see the longer
     // comment on the Search/Explore toggle in page.tsx for why.
     <main className="w-full min-h-screen bg-white px-[21px] flex flex-col gap-8" style={{ paddingTop: 24 }}>
-      {/* Replace with your real logo asset. Plain <img> on purpose: a 30px
-          local icon gains nothing from next/image's optimizer. */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/landed-icon.png" alt="Landed" className="w-[30px] h-auto" />
+      <LandedLogo />
 
       {bookings === null && (
         <span className="text-[13px] leading-snug" style={{ color: "#767676" }}>

@@ -52,6 +52,7 @@ import { getBooking, saveBooking, newBookingId } from "./lib/bookingsStore";
 import type { SavedItem, SavedLiveResults } from "./lib/bookingsStore";
 import type { PlanLocation } from "./lib/geo";
 import { NO_LOCATION } from "./lib/geo";
+import { LandedLogo } from "./components/LandedLogo";
 
 const WHEN_MENU = (["now", "tonight", "tomorrow"] as TimeKey[]).map(
   (k) => TIME_OPTIONS.find((o) => o.key === k)!
@@ -706,10 +707,7 @@ export default function Home() {
           className="w-full px-[21px] flex-1 flex flex-col gap-5"
           style={{ position: "relative", zIndex: 2, paddingTop: 90 }}
         >
-          {/* Replace with your real logo asset. Plain <img> on purpose: a 30px
-              local icon gains nothing from next/image's optimizer. */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/landed-icon.png" alt="Landed" className="w-[30px] h-auto" />
+          <LandedLogo />
           <SectionHeading hideArrow>Where would you like to L↘nd?</SectionHeading>
 
           <LiveMap
