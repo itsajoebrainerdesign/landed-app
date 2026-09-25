@@ -21,10 +21,15 @@ export function bookingSearchUrl(name: string, area?: string, website?: string) 
 // A venue's own Google Maps page, where the person can tap Save. Google's
 // venue id (in our option ids, "g-<category>-<placeId>") makes it the
 // exact place rather than a name search.
-export function placeMapsUrl(venue: { title: string; id?: string }, area?: string) {
+//
+// The search text is the name plus its full address when we have it: older
+// Google Maps apps (e.g. on older iPhones) ignore query_place_id and search
+// the text alone, so the address keeps them on the right place.
+export function placeMapsUrl(venue: { title: string; id?: string; address?: string }, area?: string) {
   const placeId = venue.id?.match(/^g-[a-z]+-(.+)$/)?.[1];
-  if (!placeId) return mapsUrl(venue.title, area);
-  return mapsUrl(venue.title, area) + "&query_place_id=" + encodeURIComponent(placeId);
+  const text = venue.address ? `${venue.title}, ${venue.address}` : withArea(venue.title, area);
+  const url = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(text);
+  return placeId ? url + "&query_place_id=" + encodeURIComponent(placeId) : url;
 }
 
 // Some venues list a platform's homepage (e.g. just "instagram.com")

@@ -53,7 +53,7 @@ export const CATEGORY_LABELS: Record<CategoryKey, string> = {
   stay: "Stay",
   restaurant: "Restaurant",
   attractions: "Attractions",
-  bar: "Late Bar",
+  bar: "Nightlife",
   live: "Live",
   parking: "Parking",
 };
@@ -63,7 +63,7 @@ export const CATEGORY_STYLE: Record<CategoryKey, { tag: string; tagBg: string }>
   stay: { tag: "STAY", tagBg: "#E7DEF7" },
   restaurant: { tag: "RESTAURANT", tagBg: "#F0CFCF" },
   attractions: { tag: "ATTRACTIONS", tagBg: "#D6E8F5" },
-  bar: { tag: "LATE BAR", tagBg: "#F1F3C4" },
+  bar: { tag: "NIGHTLIFE", tagBg: "#F1F3C4" },
   live: { tag: "LIVE", tagBg: "#F6DCCB" },
   parking: { tag: "PARKING", tagBg: "#DCEAE3" },
 };
@@ -152,7 +152,14 @@ export function computePicks(vibe: VibeKey, budget: BudgetKey, catalog: Catalog)
 export function mergeCatalog(live: Partial<Catalog> | null): Catalog {
   const result = emptyCatalog();
   CATEGORY_ORDER.forEach((cat) => {
-    result[cat] = live?.[cat] ?? [];
+    result[cat] = (live?.[cat] ?? []).map((o) => withCategoryStyle(cat, o));
   });
   return result;
+}
+
+// The category's current tag and colour — results cached or plans saved
+// before a rename (e.g. "LATE BAR" → "NIGHTLIFE") show the new one.
+export function withCategoryStyle<T extends { tag: string; tagBg: string }>(cat: string, option: T): T {
+  const style = CATEGORY_STYLE[cat as CategoryKey];
+  return style && (option.tag !== style.tag || option.tagBg !== style.tagBg) ? { ...option, tag: style.tag, tagBg: style.tagBg } : option;
 }

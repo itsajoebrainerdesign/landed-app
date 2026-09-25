@@ -4,7 +4,7 @@ import { placeMapsUrl } from "../lib/urls";
 // Opens the venue's own Google Maps page, where the person taps Save to
 // keep it on their map. (Google has no way for an app to save places for
 // them, so it's one tap per venue.)
-export function SaveInMapsLink({ venue, area }: { venue: { title: string; id?: string }; area?: string }) {
+export function SaveInMapsLink({ venue, area }: { venue: { title: string; id?: string; address?: string }; area?: string }) {
   return (
     <a
       href={placeMapsUrl(venue, area)}

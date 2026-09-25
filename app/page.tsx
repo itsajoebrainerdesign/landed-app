@@ -15,7 +15,7 @@ function resultsFromSavedItems(items: Record<string, SavedItem>): LiveResults {
   for (const [cat, item] of Object.entries(items)) {
     if (!item.id || !item.address || !item.meta) continue; // very old saves: display fields only
     byCat[cat as CategoryKey] = [
-      {
+      withCategoryStyle(cat, {
         id: item.id,
         tag: item.tag,
         tagBg: item.tagBg,
@@ -32,12 +32,12 @@ function resultsFromSavedItems(items: Record<string, SavedItem>): LiveResults {
         photos: item.photos,
         website: item.website,
         partnerUrl: item.partnerUrl,
-      },
+      }),
     ];
   }
   return { now: byCat, tonight: byCat, tomorrow: byCat };
 }
-import { CATEGORY_ORDER, CATEGORY_LABELS, computePicks, mergeCatalog, optionsForBudget, pickForBudget, emptyCatalog } from "./lib/categoryOptions";
+import { CATEGORY_ORDER, CATEGORY_LABELS, computePicks, mergeCatalog, optionsForBudget, pickForBudget, emptyCatalog, withCategoryStyle } from "./lib/categoryOptions";
 import { PlanSheetItems } from "./components/PlanSheetItems";
 import { useSheetLock, SHEET_SCROLL_STYLE } from "./lib/useSheetLock";
 import { QuickDropdown } from "./components/QuickDropdown";
@@ -160,9 +160,9 @@ export default function Home() {
   // Saved plans store each venue in full, so a live venue from an earlier
   // session reloads exactly rather than falling back to today's best pick.
   function rememberSavedItems(items: Record<string, SavedItem>) {
-    Object.values(items).forEach((item) => {
+    Object.entries(items).forEach(([cat, item]) => {
       if (!item.id || !item.address || !item.meta) return; // older saves only have display fields
-      knownOptionsRef.current.set(item.id, {
+      knownOptionsRef.current.set(item.id, withCategoryStyle(cat, {
         id: item.id,
         tag: item.tag,
         tagBg: item.tagBg,
@@ -179,7 +179,7 @@ export default function Home() {
         photos: item.photos,
         website: item.website,
         partnerUrl: item.partnerUrl,
-      });
+      }));
     });
   }
 

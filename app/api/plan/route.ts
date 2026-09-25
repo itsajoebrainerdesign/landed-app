@@ -397,7 +397,7 @@ function localDate(lng: number): string {
 }
 
 function cacheKey(input: PlanRequest): string {
-  return `v4${partnerChecksSignature()}|${input.lat.toFixed(2)},${input.lng.toFixed(2)}|${input.vibe}|${localDate(input.lng)}`;
+  return `v5${partnerChecksSignature()}|${input.lat.toFixed(2)},${input.lng.toFixed(2)}|${input.vibe}|${localDate(input.lng)}`;
 }
 
 function readMemoryCache(key: string): PlanData | null {
@@ -635,6 +635,15 @@ function categoryOptionsOf(data: PlanData, cat: CategoryKey): CategoryOption[] {
     for (const o of list ?? []) if (!seen.has(o.id)) seen.set(o.id, o);
   }
   return [...seen.values()];
+}
+
+// Google doesn't publish car parks' height limits. It marks some as
+// multi-storey (parking_garage), which means a height barrier — usually
+// around 2m, too low for campervans and vans. It misses plenty of
+// multi-storeys too (they come back as plain lots), so there's no
+// "no height limit" label; the plan sheet's parking note covers the rest.
+function heightNote(place: Place): string | null {
+  return (place.types ?? []).includes("parking_garage") ? "Multi-storey · height limit" : null;
 }
 
 function kindLabel(place: Place): string {
@@ -1217,6 +1226,10 @@ function assemble(verified: Verified[], input: PlanRequest): PlanData {
     const meta = [`${(distanceKm * 0.621371).toFixed(1)} mi`];
     if (typeof place.rating === "number") meta.push(`★ ${place.rating.toFixed(1)} Reviews`);
     if (candidate.highlight) meta.push(candidate.highlight);
+    if (cat === "parking") {
+      const height = heightNote(place);
+      if (height) meta.push(height);
+    }
     const option: CategoryOption = {
       id: `g-${cat}-${place.id}`,
       tag: template.tag,

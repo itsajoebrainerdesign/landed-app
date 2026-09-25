@@ -4,6 +4,7 @@ import { CTA_GRADIENT } from "../lib/constants";
 import { planItemLink } from "../lib/urls";
 import { telHref } from "../lib/format";
 import { partnerLink, travelLinks } from "../lib/affiliates";
+import { withCategoryStyle } from "../lib/categoryOptions";
 
 type SheetItem = {
   tag: string;
@@ -12,6 +13,7 @@ type SheetItem = {
   price: string;
   unit: string;
   phone?: string;
+  address?: string;
   id?: string;
   lat?: number;
   lng?: number;
@@ -42,7 +44,8 @@ export function PlanSheetItems({
   const tracked = travel.length > 0 || items.some(([cat, item]) => !item.hasApiBooking && partnerLink(cat, item, { time, vibe }));
   return (
     <>
-      {items.map(([cat, item]) => {
+      {items.map(([cat, saved]) => {
+        const item = withCategoryStyle(cat, saved);
         // Through the venue's confirmed partner page when there is one
         // (and that programme is set up); otherwise the venue's website /
         // ticket search / directions.
@@ -60,6 +63,11 @@ export function PlanSheetItems({
               </a>
             )}
             <SaveInMapsLink venue={item} area={area} />
+            {cat === "parking" && (
+              <span style={{ fontSize: 12, lineHeight: 1.45, color: "#767766" }}>
+                Campervan, van or large vehicle? Multi-storey car parks usually have a height barrier around 2m, so check the signs or the operator&rsquo;s site before you go.
+              </span>
+            )}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
                 <span style={{ fontWeight: 600, fontSize: 16, color: "#111111" }}>{item.price}</span>
