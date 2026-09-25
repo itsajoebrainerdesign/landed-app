@@ -112,3 +112,19 @@ export function stayBookingUrl(
   }
   return "https://www.booking.com/searchresults.html?" + params.toString();
 }
+
+// The action button on a venue in a plan sheet (the booking sheet and a
+// saved booking look the same): Booking.com for stays, tickets for
+// attractions and live, directions for parking, and booking otherwise.
+export function planItemLink(
+  cat: string,
+  item: { title: string; lat?: number; lng?: number; website?: string },
+  area?: string,
+  time?: string,
+  vibe?: string
+): { href: string; label: string } {
+  if (cat === "stay") return { href: stayBookingUrl(item, area, time, vibe), label: "Book ↗" };
+  if (cat === "attractions" || cat === "live") return { href: ticketSearchUrl(item.title, area, item.website), label: "Get Tickets ↗" };
+  if (cat === "parking") return { href: mapsUrl(item.title, area), label: "Get Directions ↗" };
+  return { href: bookingSearchUrl(item.title, area, item.website), label: "Book ↗" };
+}

@@ -3,12 +3,11 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { VIBE_OPTIONS, BUDGET_OPTIONS, CTA_GRADIENT, normalizeBudget } from "../lib/constants";
-import { mapsUrl, ticketSearchUrl, bookingSearchUrl, stayBookingUrl } from "../lib/urls";
 import { formatDate } from "../lib/format";
 import type { SavedBooking } from "../lib/bookingsStore";
 import { listBookings, deleteBooking } from "../lib/bookingsStore";
 import { SwipeToRemove } from "../components/SwipeToRemove";
-import { SaveInMapsLink } from "../components/SaveInMapsLink";
+import { PlanSheetItems } from "../components/PlanSheetItems";
 import { onAuthChange } from "../lib/accountStore";
 
 // Note: lib/categoryOptions.ts has its own, deliberately different
@@ -120,15 +119,6 @@ function BookingCard({
   );
 }
 
-// `area` is the booking's location name (if it has one); `time` sets a
-// stay's dates.
-function linkForCategory(cat: string, name: string, area?: string, time?: string, pos?: { lat?: number; lng?: number }, website?: string, vibe?: string) {
-  if (cat === "stay") return { href: stayBookingUrl({ title: name, ...pos }, area, time, vibe), label: "Book ↗" };
-  if (cat === "attractions" || cat === "live") return { href: ticketSearchUrl(name, area, website), label: "Get Tickets ↗" };
-  if (cat === "parking") return { href: mapsUrl(name, area), label: "Get Directions ↗" };
-  return { href: bookingSearchUrl(name, area, website), label: "Book ↗" };
-}
-
 function ViewBookingSheet({
   booking,
   onClose,
@@ -138,7 +128,6 @@ function ViewBookingSheet({
 }) {
   const open = !!booking;
   const items = booking ? Object.entries(booking.items) : [];
-  const total = items.reduce((sum, [, item]) => sum + parsePrice(item.price), 0);
 
   return (
     <div
@@ -168,8 +157,8 @@ function ViewBookingSheet({
           display: "flex",
           flexDirection: "column",
           background: "#FFFFFF",
-          height: "85vh",
-          maxHeight: "85vh",
+          height: "92vh",
+          maxHeight: "92vh",
           transform: open ? "translateY(0%)" : "translateY(100%)",
           transition: "transform 300ms",
         }}
@@ -186,43 +175,8 @@ function ViewBookingSheet({
         <span style={{ padding: "0 20px 16px", fontSize: 12, color: "#767766" }}>
           {booking?.planSummary}
         </span>
-        <div style={{ overflowY: "auto", padding: "0 20px 20px", display: "flex", flexDirection: "column", gap: 16, flex: "1 1 auto", minHeight: 0 }}>
-          {items.map(([cat, item]) => {
-            const link = linkForCategory(cat, item.title, booking?.location?.name, booking?.time, { lat: item.lat, lng: item.lng }, item.website, booking?.vibe);
-            return (
-              <div key={cat} style={{ borderRadius: 20, background: "#F7F5EE", padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
-                <span style={{ alignSelf: "flex-start", borderRadius: 999, padding: "6px 14px", fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", background: item.tagBg, color: "#111111" }}>
-                  {item.tag}
-                </span>
-                <span style={{ fontWeight: 600, fontSize: 18, color: "#111111" }}>{item.title}</span>
-                <SaveInMapsLink venue={item} area={booking?.location?.name} />
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                    <span style={{ fontWeight: 600, fontSize: 16, color: "#111111" }}>{item.price}</span>
-                    <span style={{ fontSize: 12, color: "#3E3E3A" }}>{item.unit}</span>
-                  </div>
-                  {item.hasApiBooking ? (
-                    <span style={{ display: "flex", alignItems: "center", gap: 6, borderRadius: 999, padding: "8px 14px", fontSize: 11, fontWeight: 700, background: "#DEEB3A", color: "#111111" }}>
-                      ✓ Booked
-                    </span>
-                  ) : (
-                    <a
-                      href={link.href}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{ borderRadius: 999, padding: "8px 14px", fontSize: 11, fontWeight: 700, background: CTA_GRADIENT, color: "#111111", textDecoration: "none" }}
-                    >
-                      {link.label}
-                    </a>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        <div style={{ padding: "14px 20px", borderTop: "1px solid #EFEFEF", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span className="font-semibold text-[14px]" style={{ color: "#111111" }}>Estimated total</span>
-          <span className="font-semibold text-[18px]" style={{ color: "#111111" }}>£{total.toFixed(2)}</span>
+        <div style={{ overflowY: "auto", padding: "0 20px 32px", display: "flex", flexDirection: "column", gap: 16, flex: "1 1 auto", minHeight: 0 }}>
+          <PlanSheetItems items={items} area={booking?.location?.name} time={booking?.time} vibe={booking?.vibe} />
         </div>
       </div>
     </div>

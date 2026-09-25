@@ -37,11 +37,11 @@ function resultsFromSavedItems(items: Record<string, SavedItem>): LiveResults {
   return { now: byCat, tonight: byCat, tomorrow: byCat };
 }
 import { CATEGORY_ORDER, CATEGORY_LABELS, computePicks, mergeCatalog, optionsForBudget, emptyCatalog } from "./lib/categoryOptions";
-import { mapsUrl, ticketSearchUrl, bookingSearchUrl, stayBookingUrl, AFFILIATE_LINKS_ON } from "./lib/urls";
+import { mapsUrl } from "./lib/urls";
 import { telHref } from "./lib/format";
 import { PinIcon, PhoneIcon } from "./components/icons";
 import { VenuePhotoTile } from "./components/VenuePhotoTile";
-import { SaveInMapsLink } from "./components/SaveInMapsLink";
+import { PlanSheetItems } from "./components/PlanSheetItems";
 import { QuickDropdown } from "./components/QuickDropdown";
 import { PlanItemCard } from "./components/PlanItemCard";
 import { SectionHeading } from "./components/SectionHeading";
@@ -77,9 +77,6 @@ const TIME_PHRASES: Record<TimeKey, string> = {
 const NOISE_SVG =
   "<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(#n)'/></svg>";
 const NOISE_URL = "data:image/svg+xml," + encodeURIComponent(NOISE_SVG);
-const BAR_TIMES = ["6:30 PM", "7:00 PM", "7:30 PM", "8:00 PM", "8:30 PM", "9:00 PM"];
-const RESTAURANT_TIMES = ["6:00 PM", "6:30 PM", "7:00 PM", "7:30 PM", "8:00 PM", "8:30 PM"];
-const ARRIVAL_TIMES = ["Before 3 PM", "3–6 PM", "6–9 PM", "9 PM–12 AM", "After midnight"];
 
 export default function Home() {
   const [mode, setMode] = useState<"search" | "explore">("search");
@@ -90,9 +87,6 @@ export default function Home() {
   const [bookingOpen, setBookingOpen] = useState(false);
   const [bookingsConfirmed, setBookingsConfirmed] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [barTime, setBarTime] = useState("7:30 PM");
-  const [restaurantTime, setRestaurantTime] = useState("7:00 PM");
-  const [arrivalTime, setArrivalTime] = useState("6–9 PM");
 
   // Which option is currently picked per category, and which category's
   // runner-up list (if any) is expanded below its card.
@@ -1075,12 +1069,15 @@ export default function Home() {
           >
             <div style={{ width: 40, height: 5, borderRadius: 999, background: "#D9D9D9" }} />
           </div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", padding: "0 20px 4px", flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px 4px", flexShrink: 0 }}>
+            <span style={{ fontWeight: 600, fontSize: 18, color: "#111111" }}>Your plan</span>
             <button onClick={() => setBookingOpen(false)} aria-label="Close" style={{ fontWeight: 600, fontSize: 18, color: "#111111", background: "none", border: "none", padding: 8, cursor: "pointer" }}>
               ✕
             </button>
           </div>
-          <span style={{ padding: "0 20px 10px", fontSize: 18, fontWeight: 600, color: "#111111", flexShrink: 0 }}>Your bookings</span>
+          {bookableCategories.length > 0 && (
+            <span style={{ padding: "0 20px 16px", fontSize: 12, color: "#767766", flexShrink: 0 }}>{planSummary}</span>
+          )}
           <div style={{ overflowY: "auto", padding: "0 20px 32px", display: "flex", flexDirection: "column", gap: 16, flex: "1 1 auto", minHeight: 0 }}>
             {bookableCategories.length === 0 && (
               <div style={{ borderRadius: 20, background: "#F7F5EE", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
@@ -1099,156 +1096,17 @@ export default function Home() {
                 </button>
               </div>
             )}
-            {bookableCategories
-              .map((cat) => {
-              const item = findOption(cat, picks[cat])!;
-              return (
-                <div key={cat} style={{ borderRadius: 20, background: "#F7F5EE", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
-                  <span style={{ alignSelf: "flex-start", borderRadius: 999, padding: "6px 14px", fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", background: item.tagBg, color: "#111111" }}>
-                    {item.tag}
-                  </span>
-                  <span style={{ fontWeight: 600, fontSize: 18, color: "#111111" }}>{item.title}</span>
-                  <a href={telHref(item.phone)} style={{ alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 6, textDecoration: "none" }}>
-                    <PhoneIcon />
-                    <span style={{ fontSize: 12, color: "#767766" }}>{item.phone}</span>
-                  </a>
-                  {bookingsConfirmed && <SaveInMapsLink venue={item} area={location.name} />}
-
-                  {cat === "stay" &&
-                    (item.hasApiBooking ? (
-                      bookingsConfirmed ? (
-                        <span style={{ alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 6, borderRadius: 999, padding: "8px 14px", fontSize: 12, fontWeight: 700, background: "#DEEB3A", color: "#111111" }}>
-                          ✓ Booked automatically — arriving {arrivalTime}
-                        </span>
-                      ) : (
-                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                          <span style={{ fontSize: 11, fontWeight: 600, color: "#767766" }}>Arrival time</span>
-                          <select
-                            value={arrivalTime}
-                            onChange={(e) => setArrivalTime(e.target.value)}
-                            style={{ alignSelf: "flex-start", height: 40, borderRadius: 999, border: "1.5px solid #B9B4A6", background: "#FFFFFF", padding: "0 14px", fontSize: 13, fontWeight: 600, color: "#111111", fontFamily: "inherit" }}
-                          >
-                            {ARRIVAL_TIMES.map((t) => (
-                              <option key={t} value={t}>
-                                {t}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      )
-                    ) : (
-                      <a
-                        href={stayBookingUrl(item, location.name, time, vibe)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ alignSelf: "flex-start", borderRadius: 999, padding: "10px 18px", fontSize: 12, fontWeight: 700, color: "#111111", background: CTA_GRADIENT, textDecoration: "none" }}
-                      >
-                        View & Book ↗
-                      </a>
-                    ))}
-
-                  {cat === "restaurant" &&
-                    (item.hasApiBooking ? (
-                      bookingsConfirmed ? (
-                        <span style={{ alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 6, borderRadius: 999, padding: "8px 14px", fontSize: 12, fontWeight: 700, background: "#DEEB3A", color: "#111111" }}>
-                          ✓ Booked for {restaurantTime}
-                        </span>
-                      ) : (
-                        <select
-                          value={restaurantTime}
-                          onChange={(e) => setRestaurantTime(e.target.value)}
-                          style={{ alignSelf: "flex-start", height: 40, borderRadius: 999, border: "1.5px solid #B9B4A6", background: "#FFFFFF", padding: "0 14px", fontSize: 13, fontWeight: 600, color: "#111111", fontFamily: "inherit" }}
-                        >
-                          {RESTAURANT_TIMES.map((t) => (
-                            <option key={t} value={t}>
-                              {t}
-                            </option>
-                          ))}
-                        </select>
-                      )
-                    ) : (
-                      <a
-                        href={bookingSearchUrl(item.title, location.name, item.website)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ alignSelf: "flex-start", borderRadius: 999, padding: "10px 18px", fontSize: 12, fontWeight: 700, color: "#111111", background: CTA_GRADIENT, textDecoration: "none" }}
-                      >
-                        View & Book ↗
-                      </a>
-                    ))}
-
-                  {cat === "bar" &&
-                    (item.hasApiBooking ? (
-                      bookingsConfirmed ? (
-                        <span style={{ alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 6, borderRadius: 999, padding: "8px 14px", fontSize: 12, fontWeight: 700, background: "#DEEB3A", color: "#111111" }}>
-                          ✓ Booked for {barTime}
-                        </span>
-                      ) : (
-                        <select
-                          value={barTime}
-                          onChange={(e) => setBarTime(e.target.value)}
-                          style={{ alignSelf: "flex-start", height: 40, borderRadius: 999, border: "1.5px solid #B9B4A6", background: "#FFFFFF", padding: "0 14px", fontSize: 13, fontWeight: 600, color: "#111111", fontFamily: "inherit" }}
-                        >
-                          {BAR_TIMES.map((t) => (
-                            <option key={t} value={t}>
-                              {t}
-                            </option>
-                          ))}
-                        </select>
-                      )
-                    ) : (
-                      <a
-                        href={bookingSearchUrl(item.title, location.name, item.website)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ alignSelf: "flex-start", borderRadius: 999, padding: "10px 18px", fontSize: 12, fontWeight: 700, color: "#111111", background: CTA_GRADIENT, textDecoration: "none" }}
-                      >
-                        View & Book ↗
-                      </a>
-                    ))}
-
-                  {cat === "live" && (
-                    <a
-                      href={ticketSearchUrl(item.title, location.name, item.website)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{ alignSelf: "flex-start", borderRadius: 999, padding: "10px 18px", fontSize: 12, fontWeight: 700, color: "#111111", background: CTA_GRADIENT, textDecoration: "none" }}
-                    >
-                      Get Tickets ↗
-                    </a>
-                  )}
-
-                  {cat === "attractions" && (
-                    <a
-                      href={ticketSearchUrl(item.title, location.name, item.website)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{ alignSelf: "flex-start", borderRadius: 999, padding: "10px 18px", fontSize: 12, fontWeight: 700, color: "#111111", background: CTA_GRADIENT, textDecoration: "none" }}
-                    >
-                      Get Tickets ↗
-                    </a>
-                  )}
-
-                  {cat === "parking" && (
-                    <a
-                      href={mapsUrl(item.title, location.name)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{ alignSelf: "flex-start", borderRadius: 999, padding: "10px 18px", fontSize: 12, fontWeight: 700, color: "#111111", background: CTA_GRADIENT, textDecoration: "none" }}
-                    >
-                      Get Directions ↗
-                    </a>
-                  )}
-                </div>
-              );
-            })}
+            <PlanSheetItems
+              items={bookableCategories.map((cat) => [cat, findOption(cat, picks[cat])!])}
+              area={location.name}
+              time={time}
+              vibe={vibe}
+            />
           </div>
           {bookableCategories.length > 0 && (
           <div style={{ padding: "12px 20px 20px", flexShrink: 0, borderTop: "1px solid #EFEFEF" }}>
             <span style={{ display: "block", fontSize: 12, color: "#767766", marginBottom: 12 }}>
               Anything with a live booking connection is booked automatically when you confirm — everything else opens a real booking page for you to finish there yourself.
-              {/* Affiliate disclosure (UK advertising rules), once affiliate links are live. */}
-              {AFFILIATE_LINKS_ON && bookableCategories.includes("stay") && " We may earn a commission if you book a stay through these links."}
             </span>
             <button
               onClick={() => {
