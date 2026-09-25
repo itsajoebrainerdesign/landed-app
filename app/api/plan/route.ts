@@ -30,7 +30,7 @@ import { getServerSupabase } from "../../lib/supabase/server";
  *    (distance / vibe / budget) ranks them unchanged.
  *
  * Budget isn't sent: every candidate carries an estimated price, and the
- * client applies Low/Modest/Luxury itself, so changing budget never costs
+ * client applies Modest/Luxury itself, so changing budget never costs
  * another search.
  *
  * Abuse protection — every uncached search spends real money. Anyone can
@@ -359,7 +359,7 @@ const SUBMIT_TOOL: Anthropic.Beta.BetaTool = {
             budget: {
               type: "string",
               enum: BUDGET_KEYS,
-              description: "The budget tier this venue belongs to for its category, relative to the area: low (cheap or free), modest (mid-range), luxury (premium).",
+              description: "The budget tier this venue belongs to for its category, relative to the area: modest (cheap or free through mid-range) or luxury (premium).",
             },
             times: {
               type: "array",
@@ -382,8 +382,7 @@ const SYSTEM_PROMPT = `You find real, currently operating venues for Landed, an 
 For the requested location and vibe, find strong candidates in EACH of these categories, for all three budget tiers and all three timeframes at once — the app lets the person switch budget and timeframe instantly, so this one search has to serve them all.
 
 Budget tiers (label every venue with one, relative to the area):
-- low: cheap or free options
-- modest: mid-range
+- modest: everyday spending — include cheap and free options as well as mid-range ones (roughly half and half where the area has them)
 - luxury: premium, special-occasion options
 Aim for ${PER_TIER} venues per tier in every category (about ${PER_TIER * BUDGET_KEYS.length} per category) where the area has them — the person swaps between options within their chosen tier, so each tier needs its own choices.
 

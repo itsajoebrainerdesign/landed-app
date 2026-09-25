@@ -147,22 +147,19 @@ export function pickForVibe(cat: CategoryKey, vibe: VibeKey, catalog: Catalog = 
 // Each budget tier is its own pool: the plan picks from the chosen tier,
 // and the swap sheet offers the rest of that tier. Live results carry a
 // tier from the search; the static catalog's is worked out from price —
-// cheapest third low, middle third modest, priciest third luxury.
+// the priciest third luxury, everything else modest.
 export function budgetTierOf(option: CategoryOption, all: CategoryOption[]): BudgetKey {
   if (option.budget) return option.budget;
   const byPrice = [...all].sort((a, b) => parsePrice(a.price) - parsePrice(b.price));
   const i = byPrice.findIndex((o) => o.id === option.id);
-  if (i < byPrice.length / 3) return "low";
-  if (i >= (byPrice.length * 2) / 3) return "luxury";
-  return "modest";
+  return i >= (byPrice.length * 2) / 3 ? "luxury" : "modest";
 }
 
 // The options for a category at a budget. If the area has nothing at that
 // tier, fall back to the nearest tier rather than leave the card empty.
 const TIER_FALLBACK: Record<BudgetKey, BudgetKey[]> = {
-  low: ["low", "modest", "luxury"],
-  modest: ["modest", "low", "luxury"],
-  luxury: ["luxury", "modest", "low"],
+  modest: ["modest", "luxury"],
+  luxury: ["luxury", "modest"],
 };
 export function optionsForBudget(cat: CategoryKey, budget: BudgetKey, catalog: Catalog = CATEGORY_OPTIONS): CategoryOption[] {
   const all = catalog[cat];

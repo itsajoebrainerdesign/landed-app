@@ -106,7 +106,9 @@ One search covers Now, Tonight and Tomorrow together, so switching When
 in the app is instant; a new search only runs when the place or vibe
 changes. Measured 2026-09-24/25 (uncached):
 
-- **~30–60 s** per search, so results appear well after the page loads.
+- **~40 s** per search (two budget tiers — Modest and Luxury — with the
+  plan's pick plus 3 swaps each, for all three timeframes), so results
+  appear well after the page loads.
   An animated loading bar shows meanwhile; near Galway the built-in
   catalog shows underneath it.
 How a search works: Google Places first lists what's actually near the

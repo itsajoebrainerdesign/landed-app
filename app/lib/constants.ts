@@ -8,7 +8,10 @@
 
 export type TimeKey = "now" | "tonight" | "tomorrow";
 export type VibeKey = "nightout" | "date" | "family" | "solo";
-export type BudgetKey = "low" | "modest" | "luxury";
+// Two tiers: Modest covers everything from cheap and free to mid-range;
+// Luxury is for higher spends. (There used to be a separate Low tier —
+// plans saved with "low" open as Modest, see normalizeBudget.)
+export type BudgetKey = "modest" | "luxury";
 
 export const TIME_OPTIONS: { key: TimeKey; label: string }[] = [
   { key: "now", label: "Now" },
@@ -22,7 +25,6 @@ export const VIBE_OPTIONS: { key: VibeKey; label: string }[] = [
   { key: "solo", label: "Solo" },
 ];
 export const BUDGET_OPTIONS: { key: BudgetKey; label: string }[] = [
-  { key: "low", label: "Low" },
   { key: "modest", label: "Modest" },
   { key: "luxury", label: "Luxury" },
 ];
@@ -30,3 +32,8 @@ export const BUDGET_OPTIONS: { key: BudgetKey; label: string }[] = [
 // The app's one brand gradient, used on every primary CTA button across
 // every page.
 export const CTA_GRADIENT = "linear-gradient(100deg,#EFF3A8 0%,#DEEB3A 100%)";
+
+// Budgets saved before the Low tier was merged into Modest.
+export function normalizeBudget(value: string | null | undefined): BudgetKey {
+  return value === "luxury" ? "luxury" : "modest";
+}

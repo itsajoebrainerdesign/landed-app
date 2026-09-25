@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { TimeKey, VibeKey, BudgetKey } from "./lib/constants";
-import { TIME_OPTIONS, VIBE_OPTIONS, BUDGET_OPTIONS, CTA_GRADIENT } from "./lib/constants";
+import { TIME_OPTIONS, VIBE_OPTIONS, BUDGET_OPTIONS, CTA_GRADIENT, normalizeBudget } from "./lib/constants";
 import type { CategoryKey, CategoryOption, Catalog } from "./lib/categoryOptions";
 
 // /api/plan's results: per timeframe, per category.
@@ -52,7 +52,7 @@ const WHEN_MENU = (["now", "tonight", "tomorrow"] as TimeKey[]).map(
 const VIBE_MENU = (["nightout", "family", "date", "solo"] as VibeKey[]).map(
   (k) => VIBE_OPTIONS.find((o) => o.key === k)!
 );
-const BUDGET_MENU = (["low", "modest", "luxury"] as BudgetKey[]).map(
+const BUDGET_MENU = (["modest", "luxury"] as BudgetKey[]).map(
   (k) => BUDGET_OPTIONS.find((o) => o.key === k)!
 );
 
@@ -80,7 +80,7 @@ export default function Home() {
   const [radius, setRadius] = useState(5);
   const [time, setTime] = useState<TimeKey>("now");
   const [vibe, setVibe] = useState<VibeKey>("nightout");
-  const [budget, setBudget] = useState<BudgetKey>("low");
+  const [budget, setBudget] = useState<BudgetKey>("modest");
   const [bookingOpen, setBookingOpen] = useState(false);
   const [bookingsConfirmed, setBookingsConfirmed] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -91,7 +91,7 @@ export default function Home() {
   // Which option is currently picked per category, and which category's
   // runner-up list (if any) is expanded below its card.
   const [picks, setPicks] = useState<Record<CategoryKey, string>>(() =>
-    computePicks("nightout", "low")
+    computePicks("nightout", "modest")
   );
   const [removedCategories, setRemovedCategories] = useState<CategoryKey[]>([]);
   const [showAddMenu, setShowAddMenu] = useState(false);
@@ -496,7 +496,7 @@ export default function Home() {
         }
         setVibe(found.vibe as VibeKey);
         setTime(found.time as TimeKey);
-        setBudget(found.budget as BudgetKey);
+        setBudget(normalizeBudget(found.budget));
         setPicks(found.picks as Record<CategoryKey, string>);
         setRemovedCategories((found.removedCategories || []) as CategoryKey[]);
         setBookingsConfirmed(!!found.confirmed);
@@ -563,7 +563,7 @@ export default function Home() {
       engagedRef.current = false;
       setVibe("nightout");
       setTime("now");
-      setBudget("low");
+      setBudget("modest");
       setRemovedCategories([]);
       setBookingsConfirmed(false);
       manualPicksRef.current = false;
@@ -573,7 +573,7 @@ export default function Home() {
       setLiveStatus(null);
       setLiveLoading(false);
       setMode("search");
-      setPicks(computePicks("nightout", "low", mergeCatalog(null)));
+      setPicks(computePicks("nightout", "modest", mergeCatalog(null)));
       setMapResetSignal((n) => n + 1);
       if (window.location.search) {
         window.history.replaceState(null, "", "/");

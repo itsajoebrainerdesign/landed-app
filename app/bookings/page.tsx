@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { VIBE_OPTIONS, BUDGET_OPTIONS, CTA_GRADIENT } from "../lib/constants";
+import { VIBE_OPTIONS, BUDGET_OPTIONS, CTA_GRADIENT, normalizeBudget } from "../lib/constants";
 import { mapsUrl, ticketSearchUrl, bookingSearchUrl } from "../lib/urls";
 import { formatDate } from "../lib/format";
 import type { SavedBooking } from "../lib/bookingsStore";
@@ -38,7 +38,7 @@ const EXAMPLE_BOOKINGS: SavedBooking[] = [
     },
     vibe: "nightout",
     time: "tonight",
-    budget: "low",
+    budget: "modest",
     removedCategories: [],
     confirmed: true,
   },
@@ -162,7 +162,7 @@ function BookingCard({
         <span className="font-semibold text-[15px] leading-snug text-ink">{booking.location?.label ?? "Galway, Ireland"}</span>
         <span className="text-[12px]" style={{ color: "#767766" }}>
           {VIBE_OPTIONS.find((o) => o.key === booking.vibe)?.label || booking.vibe} ·{" "}
-          {BUDGET_OPTIONS.find((o) => o.key === booking.budget)?.label || booking.budget}
+          {BUDGET_OPTIONS.find((o) => o.key === normalizeBudget(booking.budget))?.label}
         </span>
       </div>
       {booking.confirmed ? (
