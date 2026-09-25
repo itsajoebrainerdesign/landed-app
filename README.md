@@ -106,16 +106,23 @@ One search covers Now, Tonight and Tomorrow together, so switching When
 in the app is instant; a new search only runs when the place or vibe
 changes. Measured 2026-09-24/25 (uncached):
 
-- **~45–80 s** per search (the longer end since it covers all three
-  timeframes), so results appear well after the page loads.
+- **~30–60 s** per search, so results appear well after the page loads.
   An animated loading bar shows meanwhile; near Galway the built-in
   catalog shows underneath it.
-- **Claude**: ~22k input + ~2k output tokens and up to 5 web searches —
-  roughly **$0.20** per search at list prices.
-- **Google Places**: ~30 Text Search calls per search, with Enterprise-tier
-  fields (rating, phone, opening hours) — roughly **$1** per search at list
-  prices, before Google's monthly free allowance. This is the bigger cost.
-- Typically 27–29 of the 30 AI candidates pass Places verification.
+How a search works: Google Places first lists what's actually near the
+pin in each category (~8–10 Nearby Search requests; two each for
+restaurants and bars, since Google returns at most 20 per request). The
+AI chooses from those lists and uses web search (max 3) only for what's
+on, vibe and prices. Anything picked from a list is already verified, so
+only the occasional unlisted pick needs its own lookup.
+
+- **Claude**: roughly **$0.15–0.20** per search at list prices.
+- **Google Places**: ~8–12 requests with Enterprise-tier fields (rating,
+  phone, opening hours) — roughly **$0.30–0.40** per search at list
+  prices, before Google's monthly free allowance. (Before the lists,
+  it was ~30 one-by-one lookups, about $1.)
+- St Albans centre, 2026-09-25: 35 restaurants, 29 bars, 20 attractions,
+  20 live venues, 20 car parks and 12 stays listed; search took 28 s.
 
 Protections in `app/api/plan/route.ts`:
 

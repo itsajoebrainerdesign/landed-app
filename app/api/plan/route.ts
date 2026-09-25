@@ -77,7 +77,7 @@ const MAX_DISTANCE_KM: Record<CategoryKey, number> = {
 const MODEL = "claude-opus-5";
 // Up to this many per category across all three timeframes combined
 // (each one costs a Google Places lookup)…
-const CANDIDATES_PER_CATEGORY = 5;
+const CANDIDATES_PER_CATEGORY = 6;
 // …and at most this many kept per category per timeframe: the plan's pick
 // plus 3 swaps.
 const OPTIONS_PER_CATEGORY = 4;
@@ -292,21 +292,21 @@ async function buildPlan(input: PlanRequest): Promise<PlanResponse> {
   if (!placesKey) warnings.push("GOOGLE_PLACES_API_KEY is not set — venues can't be verified, so live results are disabled.");
   if (!anthropicKey || !placesKey) return staticResponse(warnings);
 
-  // Real places to stay near the pin, from Google, handed to the AI so it
-  // picks stays from what's actually there (and small local B&Bs and
-  // guesthouses aren't missed). Fast (<1 s); if it fails, the AI searches
-  // for stays on its own as before.
-  const nearbyStays = await findNearbyStays(input, placesKey, warnings);
-  const candidates = await findCandidatesWithAI(input, anthropicKey, warnings, nearbyStays);
+  // What's actually near the pin in each category, from Google — the AI
+  // chooses from these lists (see findNearbyLists).
+  const nearbyLists = await findNearbyLists(input, placesKey, warnings);
+  const candidates = await findCandidatesWithAI(input, anthropicKey, warnings, nearbyLists);
   if (candidates.length === 0) return staticResponse(warnings);
 
-  const verified = await verifyWithGooglePlaces(candidates, input, placesKey, warnings, nearbyStays);
+  const verified = await verifyWithGooglePlaces(candidates, input, placesKey, warnings, nearbyLists);
   const options = rankAndAssemble(verified, input);
   const count = (t: TimeKey) => Object.values(options[t] ?? {}).reduce((n, o) => n + (o?.length ?? 0), 0);
   const source = TIME_KEYS.some((t) => count(t) > 0) ? "live" : "static";
   if (source === "static") warnings.push("No AI candidates could be verified in Google Places.");
   console.info(
-    `[api/plan] ${input.location} ${input.vibe}: ${nearbyStays.length} nearby stays listed, ${candidates.length} candidates, ${verified.length} verified, kept ` +
+    `[api/plan] ${input.location} ${input.vibe}: listed ` +
+      CATEGORY_ORDER.map((c) => `${c} ${nearbyLists[c]?.length ?? 0}`).join(" / ") +
+      `; ${candidates.length} candidates, ${verified.length} verified, kept ` +
       TIME_KEYS.map((t) => `${t} ${count(t)}`).join(" / ")
   );
   return { options, source, warnings };
@@ -398,7 +398,7 @@ async function findCandidatesWithAI(
   input: PlanRequest,
   apiKey: string,
   warnings: string[],
-  nearbyStays: NearbyStay[]
+  nearbyLists: NearbyLists
 ): Promise<Candidate[]> {
   const client = new Anthropic({ apiKey, timeout: 180_000, maxRetries: 1 });
   const vibeLabel = VIBE_OPTIONS.find((o) => o.key === input.vibe)!.label;
@@ -411,19 +411,7 @@ async function findCandidatesWithAI(
         // instant and let the model work out local time for the location.
         `Current time: ${new Date().toISOString()} UTC — use the pin's local time for now / tonight / tomorrow.\n` +
         `Vibe: ${vibeLabel} (${input.vibe})` +
-        (nearbyStays.length > 0
-          ? `\n\nPlaces to stay near the pin, from Google Maps (closest first):\n` +
-            nearbyStays
-              .map(
-                (st, i) =>
-                  `${i + 1}. ${st.place.displayName?.text} — ${st.distanceKm.toFixed(1)} km — ${lodgingKind(st.place)}` +
-                  (typeof st.place.rating === "number"
-                    ? ` — ★${st.place.rating.toFixed(1)}${st.place.userRatingCount ? ` (${st.place.userRatingCount} reviews)` : ""}`
-                    : "")
-              )
-              .join("\n") +
-            `\nChoose stays from this list (use the names exactly as written), favouring close ones that suit the vibe, with a spread of prices. Only add a stay from elsewhere if nothing here suits.`
-          : ""),
+        nearbyListsPrompt(nearbyLists),
     },
   ];
 
@@ -450,7 +438,9 @@ async function findCandidatesWithAI(
           {
             type: "web_search_20260209",
             name: "web_search",
-            max_uses: 5,
+            // The Google lists cover "what's nearby"; web search is only
+            // for what's on, vibe and prices, so fewer are needed.
+            max_uses: 3,
             // No user_location: web search rejects some countries in it
             // (e.g. "IE" → 400), and the prompt already has coordinates.
           },
@@ -539,6 +529,7 @@ type Place = {
   rating?: number;
   userRatingCount?: number;
   primaryType?: string;
+  priceLevel?: string;
   location?: { latitude: number; longitude: number };
   businessStatus?: string;
   currentOpeningHours?: { openNow?: boolean };
@@ -605,82 +596,174 @@ class PlacesError extends Error {
   }
 }
 
-// ── Nearby places to stay (Google Places Nearby Search) ──────────────────
-
-type NearbyStay = { place: Place; distanceKm: number };
-
-// One Nearby Search call: up to 20 places to stay within the stay limit of
-// the pin, closest first, with the same fields a Text Search lookup gets —
-// so a stay picked from this list needs no separate verification lookup.
+// ── Nearby places per category (Google Places Nearby Search) ────────────
 //
-// Only proper accommodation (by Google's *primary* type): Google's generic
-// "lodging" is mostly individual holiday lets, which otherwise fill the 20
-// slots and crowd out real hotels. Places with fewer than 3 reviews, and
-// repeated names (the same let listed several times), are dropped too.
-const STAY_PRIMARY_TYPES = [
-  "hotel",
-  "bed_and_breakfast",
-  "guest_house",
-  "inn",
-  "hostel",
-  "motel",
-  "resort_hotel",
-  "extended_stay_hotel",
-  "farmstay",
+// Before the AI search, Google lists what's actually around the pin in
+// each category. The AI chooses from these lists (so it isn't limited to
+// what a few web searches turn up), and anything it picks from a list is
+// already verified — no separate lookup. That makes searches both broader
+// and cheaper: ~8 list requests replace ~30 one-by-one verifications.
+//
+// Google returns at most 20 places per request, so restaurants and bars
+// (plentiful in town centres) get two: the 20 most popular and the 20
+// closest. Lists use each place's *primary* type where secondary types
+// would let other categories in (hotels also count as restaurants, etc.).
+
+type NearbyPlace = { place: Place; distanceKm: number };
+type NearbyLists = Partial<Record<CategoryKey, NearbyPlace[]>>;
+
+type NearbyQuery = {
+  types: string[];
+  primary?: boolean; // match on primary type only
+  excludePrimary?: string[];
+  rank: "POPULARITY" | "DISTANCE";
+  radiusKm: number;
+};
+
+const STAY_TYPES = ["hotel", "bed_and_breakfast", "guest_house", "inn", "hostel", "motel", "resort_hotel", "extended_stay_hotel", "farmstay"];
+const BAR_PRIMARY_TYPES = ["bar", "pub", "night_club", "wine_bar", "cocktail_bar", "sports_bar", "lounge_bar", "irish_pub", "brewpub", "beer_garden", "bar_and_grill", "gastropub", "karaoke"];
+const NOT_RESTAURANT_PRIMARY = ["hotel", "lodging", "bed_and_breakfast", "guest_house", "inn", ...BAR_PRIMARY_TYPES.filter((t) => t !== "gastropub" && t !== "bar_and_grill")];
+const ATTRACTION_TYPES = [
+  "tourist_attraction", "museum", "art_gallery", "park", "bowling_alley", "movie_theater", "amusement_center", "spa",
+  "historical_landmark", "zoo", "aquarium", "amusement_park", "ice_skating_rink", "water_park", "botanical_garden",
+  "cultural_landmark", "planetarium", "garden",
 ];
-const MIN_STAY_REVIEWS = 3;
-async function findNearbyStays(input: PlanRequest, apiKey: string, warnings: string[]): Promise<NearbyStay[]> {
-  try {
-    const res = await fetch("https://places.googleapis.com/v1/places:searchNearby", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Goog-Api-Key": apiKey, "X-Goog-FieldMask": PLACES_FIELDS + ",places.userRatingCount,places.primaryType" },
-      body: JSON.stringify({
-        includedPrimaryTypes: STAY_PRIMARY_TYPES,
-        maxResultCount: 20,
-        rankPreference: "DISTANCE",
-        locationRestriction: {
-          circle: { center: { latitude: input.lat, longitude: input.lng }, radius: MAX_DISTANCE_KM.stay * 1000 },
-        },
-      }),
-      signal: AbortSignal.timeout(10_000),
-      cache: "no-store",
-    });
-    if (!res.ok) throw new PlacesError(res.status, (await res.text().catch(() => "")).slice(0, 300));
-    const data = (await res.json()) as { places?: Place[] };
-    const seenNames = new Set<string>();
-    return (data.places ?? [])
-      .filter((p) => p.location && p.displayName?.text && (!p.businessStatus || p.businessStatus === "OPERATIONAL"))
-      .filter((p) => (p.userRatingCount ?? 0) >= MIN_STAY_REVIEWS)
-      .filter((p) => {
-        const name = p.displayName!.text.trim().toLowerCase();
-        if (seenNames.has(name)) return false;
-        seenNames.add(name);
-        return true;
-      })
-      .map((place) => ({
-        place,
-        distanceKm: haversineKm({ lat: input.lat, lng: input.lng }, { lat: place.location!.latitude, lng: place.location!.longitude }),
-      }));
-  } catch (err) {
-    console.error("[api/plan] nearby stays lookup failed — AI will search for stays itself", err);
-    warnings.push("Couldn't list nearby places to stay from Google; stays come from the AI search alone.");
-    return [];
+const LIVE_PRIMARY_TYPES = ["live_music_venue", "performing_arts_theater", "concert_hall", "comedy_club", "opera_house", "amphitheatre", "dance_hall", "event_venue", "night_club"];
+
+const NEARBY_QUERIES: Record<CategoryKey, NearbyQuery[]> = {
+  stay: [{ types: STAY_TYPES, primary: true, rank: "DISTANCE", radiusKm: MAX_DISTANCE_KM.stay }],
+  restaurant: [
+    { types: ["restaurant"], excludePrimary: NOT_RESTAURANT_PRIMARY, rank: "POPULARITY", radiusKm: 1.5 },
+    { types: ["restaurant"], excludePrimary: NOT_RESTAURANT_PRIMARY, rank: "DISTANCE", radiusKm: 1.5 },
+  ],
+  bar: [
+    { types: BAR_PRIMARY_TYPES, primary: true, rank: "POPULARITY", radiusKm: 1.5 },
+    { types: BAR_PRIMARY_TYPES, primary: true, rank: "DISTANCE", radiusKm: 1.5 },
+  ],
+  attractions: [{ types: ATTRACTION_TYPES, excludePrimary: ["hotel", "lodging", "gym", "fitness_center"], rank: "POPULARITY", radiusKm: MAX_DISTANCE_KM.attractions }],
+  live: [{ types: LIVE_PRIMARY_TYPES, primary: true, rank: "POPULARITY", radiusKm: MAX_DISTANCE_KM.live }],
+  parking: [{ types: ["parking"], rank: "DISTANCE", radiusKm: MAX_DISTANCE_KM.parking }],
+};
+
+// Fewer reviews than this usually means a stale or spam listing (for
+// stays, individual holiday lets). Car parks rarely get reviewed.
+const MIN_REVIEWS: Record<CategoryKey, number> = { stay: 3, restaurant: 5, bar: 5, attractions: 5, live: 3, parking: 0 };
+// In quiet areas, a walking-distance list this short gets one wider retry.
+const THIN_LIST = 8;
+
+async function nearbySearch(q: NearbyQuery, radiusKm: number, input: PlanRequest, apiKey: string): Promise<Place[]> {
+  const res = await fetch("https://places.googleapis.com/v1/places:searchNearby", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": apiKey,
+      "X-Goog-FieldMask": PLACES_FIELDS + ",places.userRatingCount,places.primaryType,places.priceLevel",
+    },
+    body: JSON.stringify({
+      [q.primary ? "includedPrimaryTypes" : "includedTypes"]: q.types,
+      ...(q.excludePrimary ? { excludedPrimaryTypes: q.excludePrimary } : {}),
+      maxResultCount: 20,
+      rankPreference: q.rank,
+      locationRestriction: { circle: { center: { latitude: input.lat, longitude: input.lng }, radius: radiusKm * 1000 } },
+    }),
+    signal: AbortSignal.timeout(10_000),
+    cache: "no-store",
+  });
+  if (!res.ok) throw new PlacesError(res.status, (await res.text().catch(() => "")).slice(0, 300));
+  return ((await res.json()) as { places?: Place[] }).places ?? [];
+}
+
+async function listCategory(cat: CategoryKey, input: PlanRequest, apiKey: string): Promise<NearbyPlace[]> {
+  const queries = NEARBY_QUERIES[cat];
+  let places = (await Promise.all(queries.map((q) => nearbySearch(q, q.radiusKm, input, apiKey)))).flat();
+  const usable = (list: Place[]) =>
+    list.filter(
+      (p) =>
+        p.location &&
+        p.displayName?.text &&
+        (!p.businessStatus || p.businessStatus === "OPERATIONAL") &&
+        (p.userRatingCount ?? 0) >= MIN_REVIEWS[cat]
+    );
+  // Quiet area: widen once to the category's limit.
+  if (usable(places).length < THIN_LIST && queries[0].radiusKm < MAX_DISTANCE_KM[cat]) {
+    places = places.concat(await nearbySearch(queries[0], MAX_DISTANCE_KM[cat], input, apiKey));
   }
+  const seenIds = new Set<string>();
+  const seenNames = new Set<string>();
+  return usable(places)
+    .filter((p) => {
+      const name = p.displayName!.text.trim().toLowerCase();
+      if (seenIds.has(p.id) || seenNames.has(name)) return false;
+      seenIds.add(p.id);
+      seenNames.add(name);
+      return true;
+    })
+    .map((place) => ({
+      place,
+      distanceKm: haversineKm({ lat: input.lat, lng: input.lng }, { lat: place.location!.latitude, lng: place.location!.longitude }),
+    }))
+    .sort((a, b) => a.distanceKm - b.distanceKm);
 }
 
-// "Hotel", "B&B", "Guest house"… for the AI's list.
-function lodgingKind(place: Place): string {
-  const t = place.primaryType || place.types?.[0] || "lodging";
-  return t.replace(/_/g, " ");
+// All categories in parallel (well under a second). A category whose list
+// fails just has no list — the AI finds that category itself, as before.
+async function findNearbyLists(input: PlanRequest, apiKey: string, warnings: string[]): Promise<NearbyLists> {
+  const lists: NearbyLists = {};
+  const failed: string[] = [];
+  await Promise.all(
+    CATEGORY_ORDER.map(async (cat) => {
+      try {
+        lists[cat] = await listCategory(cat, input, apiKey);
+      } catch (err) {
+        console.error(`[api/plan] nearby ${cat} list failed`, err);
+        failed.push(CATEGORY_LABELS[cat]);
+      }
+    })
+  );
+  if (failed.length) warnings.push(`Couldn't list nearby ${failed.join(", ")} from Google; the AI searched for those itself.`);
+  return lists;
 }
 
-// A stay the AI picked from the nearby list: same place, no lookup needed.
-function matchNearbyStay(candidate: Candidate, nearbyStays: NearbyStay[]): Place | null {
+const PRICE_LEVEL_LABEL: Record<string, string> = {
+  PRICE_LEVEL_FREE: "free",
+  PRICE_LEVEL_INEXPENSIVE: "£",
+  PRICE_LEVEL_MODERATE: "££",
+  PRICE_LEVEL_EXPENSIVE: "£££",
+  PRICE_LEVEL_VERY_EXPENSIVE: "££££",
+};
+
+// One compact line per place for the AI: name, distance, kind, rating, price.
+function describeNearby({ place, distanceKm }: NearbyPlace): string {
+  const kind = (place.primaryType || place.types?.[0] || "").replace(/_/g, " ");
+  const rating = typeof place.rating === "number" ? ` ★${place.rating.toFixed(1)} (${place.userRatingCount ?? 0})` : "";
+  const price = place.priceLevel && PRICE_LEVEL_LABEL[place.priceLevel] ? ` ${PRICE_LEVEL_LABEL[place.priceLevel]}` : "";
+  return `${place.displayName?.text} — ${distanceKm.toFixed(1)} km — ${kind}${rating}${price}`;
+}
+
+function nearbyListsPrompt(lists: NearbyLists): string {
+  const sections = CATEGORY_ORDER.filter((c) => lists[c]?.length).map(
+    (c) => `${c} (${CATEGORY_LABELS[c]}):\n` + lists[c]!.map((p) => `- ${describeNearby(p)}`).join("\n")
+  );
+  if (sections.length === 0) return "";
+  return (
+    `\n\nWhat's actually near the pin, from Google Maps (closest first; ★rating (reviews); £–££££ price level):\n\n` +
+    sections.join("\n\n") +
+    `\n\nChoose venues from these lists wherever they fit, using the names exactly as written — they're real, open, and nearby. ` +
+    `Use web search for what the lists can't tell you: what's on (especially live), what suits the vibe, and prices. ` +
+    `Only add a place that isn't listed if a category has nothing suitable.`
+  );
+}
+
+// A venue the AI picked from a list: the same Google place, no lookup
+// needed. Any category's list counts (a gastropub might be picked as a
+// restaurant from the bar list); the category's type check still applies.
+function matchNearby(candidate: Candidate, lists: NearbyLists): Place | null {
   const norm = (n: string) => n.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
-  const exact = nearbyStays.find((st) => norm(st.place.displayName!.text) === norm(candidate.name));
+  const own = lists[candidate.category] ?? [];
+  const all = [...own, ...CATEGORY_ORDER.filter((c) => c !== candidate.category).flatMap((c) => lists[c] ?? [])];
+  const exact = all.find((n) => norm(n.place.displayName!.text) === norm(candidate.name));
   if (exact) return exact.place;
-  const loose = nearbyStays.find((st) => namesMatch(candidate.name, st.place.displayName!.text));
-  return loose?.place ?? null;
+  return own.find((n) => namesMatch(candidate.name, n.place.displayName!.text))?.place ?? null;
 }
 
 async function verifyWithGooglePlaces(
@@ -688,11 +771,11 @@ async function verifyWithGooglePlaces(
   input: PlanRequest,
   apiKey: string,
   warnings: string[],
-  nearbyStays: NearbyStay[] = []
+  nearbyLists: NearbyLists = {}
 ): Promise<Verified[]> {
   const results = await Promise.allSettled(
     candidates.map((c) => {
-      const fromNearby = c.category === "stay" ? matchNearbyStay(c, nearbyStays) : null;
+      const fromNearby = matchNearby(c, nearbyLists);
       return fromNearby ? Promise.resolve(fromNearby) : lookupPlace(c, input, apiKey);
     })
   );
