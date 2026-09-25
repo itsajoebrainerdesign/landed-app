@@ -721,46 +721,65 @@ export default function Home() {
             resetSignal={mapResetSignal}
           />
           {/* How they're travelling — decides what the search looks for, so
-              it's chosen before confirming. Frosted glass like the nav. */}
+              it's chosen before confirming. Styled like the Search/Explore
+              switch: frosted glass, 44px tall, with a white pill that
+              slides to the chosen mode. */}
           <div
             role="radiogroup"
             aria-label="How are you travelling?"
             style={{
+              position: "relative",
               display: "flex",
+              alignItems: "center",
               gap: 4,
               padding: 4,
+              height: 44,
               borderRadius: 999,
               background: "rgba(255,255,255,0.35)",
               backdropFilter: "blur(18px)",
               WebkitBackdropFilter: "blur(18px)",
               border: "1px solid rgba(255,255,255,0.5)",
-              boxShadow: "0 8px 24px rgba(0,0,0,0.08)",
+              boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
               flexShrink: 0,
             }}
           >
+            <div
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                top: 4,
+                bottom: 4,
+                left: travel === TRAVEL_OPTIONS[0].key ? 4 : "50%",
+                width: "calc(50% - 4px)",
+                borderRadius: 999,
+                background: "#FFFFFF",
+                boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+                transition: "left 320ms cubic-bezier(0.4,0,0.2,1)",
+              }}
+            />
             {TRAVEL_OPTIONS.map((o) => {
-              const on = travel === o.key;
               const Icon = o.key === "transit" ? TransitIcon : CarIcon;
               return (
                 <button
                   key={o.key}
                   role="radio"
-                  aria-checked={on}
+                  aria-checked={travel === o.key}
                   aria-label={o.label}
                   title={o.label}
                   onClick={() => selectTravel(o.key)}
                   style={{
-                    flex: "1 1 0",
-                    height: 44,
+                    position: "relative",
+                    zIndex: 1,
+                    flex: 1,
+                    height: "100%",
                     borderRadius: 999,
                     border: "none",
+                    background: "transparent",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
                     cursor: "pointer",
-                    background: on ? "#111111" : "transparent",
-                    color: on ? "#FFFFFF" : "#111111",
-                    transition: "background 150ms, color 150ms",
+                    color: "#111111",
                   }}
                 >
                   <Icon />
