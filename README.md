@@ -10,10 +10,10 @@ drink, see something live, and park — around a place and a vibe.
   wide UK & Ireland view). The pin moves with a search result, **Use my
   location**, or a tap anywhere on the map, but nothing is searched until
   the person taps **Confirm location** under the map — then the plan
-  appears. Pick
-  When / Vibe / Budget, swipe venue cards left and right between options
-  (or remove them), and open the booking sheet. Plans auto-save as drafts; the + button saves the current plan
-  and starts a fresh enquiry, locked at the map again.
+  appears. Pick When / Vibe / Budget, swipe venue cards left and right
+  between options (or remove them), and open the booking sheet. Plans
+  auto-save as drafts; the + button saves the current plan and starts a
+  fresh enquiry, locked at the map again.
   Browsers only share location over HTTPS (or localhost) — on
   `http://192.168…` from a phone, it falls back to searching.
 - **Live venue search** (`app/api/plan/route.ts`): Claude (with web
