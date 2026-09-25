@@ -30,14 +30,12 @@ export function SaveInMapsLink({ venue, area }: { venue: Venue; area?: string })
   if (platform === "ios") {
     return (
       <div style={{ alignSelf: "flex-start", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
-        <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, color: "#767766" }}>
-          <PinIcon />
-          Save in
-        </span>
         <a href={appleMapsUrl(venue, area)} target="_blank" rel="noopener noreferrer" style={PILL}>
+          <PinIcon />
           Apple Maps ↗
         </a>
         <a href={placeMapsUrl(venue, area)} target="_blank" rel="noopener noreferrer" style={PILL}>
+          <PinIcon />
           Google Maps ↗
         </a>
       </div>
