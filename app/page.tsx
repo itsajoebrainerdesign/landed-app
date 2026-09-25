@@ -757,7 +757,6 @@ export default function Home() {
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    gap: 8,
                     cursor: "pointer",
                     background: on ? "#111111" : "transparent",
                     color: on ? "#FFFFFF" : "#111111",
@@ -765,7 +764,6 @@ export default function Home() {
                   }}
                 >
                   <Icon />
-                  <span style={{ fontSize: 12, fontWeight: 700 }}>{on ? o.label : ""}</span>
                 </button>
               );
             })}
