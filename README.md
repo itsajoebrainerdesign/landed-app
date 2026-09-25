@@ -11,8 +11,8 @@ drink, see something live, and park — around a place and a vibe.
   location**, or a tap anywhere on the map, but nothing is searched until
   the person taps **Confirm location** under the map — then the plan
   appears. Pick
-  When / Vibe / Budget, swap or remove venue cards, and open the booking
-  sheet. Plans auto-save as drafts; the + button saves the current plan
+  When / Vibe / Budget, swipe venue cards left and right between options
+  (or remove them), and open the booking sheet. Plans auto-save as drafts; the + button saves the current plan
   and starts a fresh enquiry, locked at the map again.
   Browsers only share location over HTTPS (or localhost) — on
   `http://192.168…` from a phone, it falls back to searching.
@@ -179,12 +179,12 @@ redeploy. Without it, results are cached per server instance only.
 
 ## Project layout
 
-- `app/page.tsx` — booking flow (map, plan, swap sheet, booking sheet,
+- `app/page.tsx` — booking flow (map, plan with swipeable option cards, booking sheet,
   Explore)
 - `app/bookings/page.tsx`, `app/account/page.tsx` — Bookings and Account
 - `app/api/plan/route.ts` — live venue search
 - `app/auth/callback/route.ts` — where Supabase email links land
-- `app/components/` — `LiveMap`, `PlanItemCard`, `QuickDropdown`, icons
+- `app/components/` — `LiveMap`, `CategoryCarousel`, `PlanItemCard`, `QuickDropdown`, icons
 - `app/lib/` — `bookingsStore` / `accountStore` (data, Supabase or this
   device), `categoryOptions` (venue shape + pick logic), `geo`
   (locations), `urls` (outbound links), `supabase/` (clients)

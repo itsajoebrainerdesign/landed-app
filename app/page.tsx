@@ -36,15 +36,11 @@ function resultsFromSavedItems(items: Record<string, SavedItem>): LiveResults {
   }
   return { now: byCat, tonight: byCat, tomorrow: byCat };
 }
-import { CATEGORY_ORDER, CATEGORY_LABELS, computePicks, mergeCatalog, optionsForBudget, emptyCatalog } from "./lib/categoryOptions";
-import { mapsUrl } from "./lib/urls";
-import { telHref } from "./lib/format";
-import { PinIcon, PhoneIcon } from "./components/icons";
-import { VenuePhotoTile } from "./components/VenuePhotoTile";
+import { CATEGORY_ORDER, CATEGORY_LABELS, computePicks, mergeCatalog, optionsForBudget, pickForBudget, emptyCatalog } from "./lib/categoryOptions";
 import { PlanSheetItems } from "./components/PlanSheetItems";
 import { useSheetLock, SHEET_SCROLL_STYLE } from "./lib/useSheetLock";
 import { QuickDropdown } from "./components/QuickDropdown";
-import { PlanItemCard } from "./components/PlanItemCard";
+import { CategoryCarousel } from "./components/CategoryCarousel";
 import { SectionHeading } from "./components/SectionHeading";
 import { LiveMap, type PendingPin } from "./components/LiveMap";
 import { LoadingBar } from "./components/LoadingBar";
@@ -97,7 +93,6 @@ export default function Home() {
   );
   const [removedCategories, setRemovedCategories] = useState<CategoryKey[]>([]);
   const [showAddMenu, setShowAddMenu] = useState(false);
-  const [openSwap, setOpenSwap] = useState<CategoryKey | null>(null);
   const [openMenu, setOpenMenu] = useState<"when" | "vibe" | "budget" | null>(null);
 
   // Where the plan is — the device location or a place searched on the map.
@@ -144,6 +139,17 @@ export default function Home() {
   // The categories actually showing in Your Plan: not removed, and with a
   // venue to show (a search can find nothing in a category).
   const visibleCategories = CATEGORY_ORDER.filter((cat) => !removedCategories.includes(cat) && findOption(cat, picks[cat]));
+  // A category's carousel: the auto pick for the vibe in the budget tier,
+  // then up to 3 more from that tier (4 in all). The order is anchored on
+  // the auto pick, not the current one, so swiping doesn't reshuffle it.
+  // A pick from elsewhere (a loaded draft) leads if it isn't among them.
+  function carouselOptions(cat: CategoryKey, current: CategoryOption): CategoryOption[] {
+    const tier = optionsForBudget(cat, budget, catalog);
+    const autoId = pickForBudget(cat, vibe, budget, catalog);
+    const auto = tier.find((o) => o.id === autoId);
+    const list = [...(auto ? [auto] : []), ...tier.filter((o) => o.id !== autoId)].slice(0, 4);
+    return list.some((o) => o.id === current.id) ? list : [current, ...list.slice(0, 3)];
+  }
   // When this timeframe has nothing to show: say why.
   const emptyMessage =
     !liveLoading && locationChosen && visibleCategories.length === 0
@@ -384,30 +390,11 @@ export default function Home() {
   }, [locationChosen]);
 
   // Nothing behind an open sheet can be scrolled or touched.
-  useSheetLock(!!openSwap || bookingOpen);
+  useSheetLock(bookingOpen);
 
-  // Drag-to-close for the two bottom sheets: the handle bar area tracks
+  // Drag-to-close for the booking sheet: the handle bar area tracks
   // vertical drag, the sheet follows it 1:1, and releasing past a threshold
   // closes it — otherwise it springs back to fully open.
-  const [swapDragY, setSwapDragY] = useState(0);
-  const [swapDragging, setSwapDragging] = useState(false);
-  const swapStartY = useRef(0);
-  function swapHandleDown(e: React.PointerEvent) {
-    setSwapDragging(true);
-    swapStartY.current = e.clientY;
-    e.currentTarget.setPointerCapture(e.pointerId);
-  }
-  function swapHandleMove(e: React.PointerEvent) {
-    if (!swapDragging) return;
-    setSwapDragY(Math.max(0, e.clientY - swapStartY.current));
-  }
-  function swapHandleUp() {
-    setSwapDragging(false);
-    if (swapDragY > 110) {
-      setOpenSwap(null);
-    }
-    setSwapDragY(0);
-  }
 
   const [bookingDragY, setBookingDragY] = useState(0);
   const [bookingDragging, setBookingDragging] = useState(false);
@@ -825,12 +812,16 @@ export default function Home() {
             .map((cat) => {
               const current = findOption(cat, picks[cat])!;
               return (
-                <PlanItemCard
+                <CategoryCarousel
                   key={cat}
-                  item={current}
+                  options={carouselOptions(cat, current)}
+                  selectedId={current.id}
                   area={location.name}
-                  actionLabel="SWAP"
-                  onAction={() => setOpenSwap(cat)}
+                  onSelect={(id) => {
+                    manualPicksRef.current = true;
+                    engagedRef.current = true;
+                    setPicks((p) => ({ ...p, [cat]: id }));
+                  }}
                   onRemove={() => {
                     engagedRef.current = true;
                     setRemovedCategories((r) => [...r, cat]);
@@ -953,108 +944,6 @@ export default function Home() {
           </span>
         </div>
       )}
-
-      {/* Swap sheet — always mounted so the slide transition can run;
-          hidden via opacity/transform/pointer-events when closed. */}
-      <div
-        className="fixed inset-0 flex items-end justify-center transition-opacity duration-300"
-        style={{
-          background: "rgba(0,0,0,0.45)",
-          opacity: openSwap ? 1 : 0,
-          pointerEvents: openSwap ? "auto" : "none",
-          zIndex: 200,
-        }}
-        onClick={() => setOpenSwap(null)}
-      >
-        <div
-          onClick={(e) => e.stopPropagation()}
-          className="w-full rounded-t-[28px] flex flex-col"
-          style={{
-            background: "#FFFFFF",
-            height: "92vh",
-            maxHeight: "92vh",
-            transform: openSwap ? `translateY(${swapDragY}px)` : "translateY(100%)",
-            transition: swapDragging ? "none" : "transform 300ms",
-          }}
-        >
-          <div
-            onPointerDown={swapHandleDown}
-            onPointerMove={swapHandleMove}
-            onPointerUp={swapHandleUp}
-            onPointerCancel={swapHandleUp}
-            className="flex justify-center pt-3 pb-2"
-            style={{ flexShrink: 0, touchAction: "none", cursor: swapDragging ? "grabbing" : "grab" }}
-          >
-            <div style={{ width: 40, height: 5, borderRadius: 999, background: "#D9D9D9" }} />
-          </div>
-          <div className="flex items-center justify-between px-5 pb-3" style={{ flexShrink: 0 }}>
-            <span className="font-semibold text-[18px] text-ink">Other options</span>
-            <button
-              onClick={() => setOpenSwap(null)}
-              aria-label="Close"
-              className="font-semibold text-[16px] text-ink"
-              style={{ background: "none", border: "none", padding: 8, cursor: "pointer" }}
-            >
-              ✕
-            </button>
-          </div>
-          <div className="overflow-y-auto px-5 pb-8 flex flex-col gap-4" style={{ flex: "1 1 auto", minHeight: 0, ...SHEET_SCROLL_STYLE }}>
-            {openSwap &&
-              // Swaps come from the same budget tier as the plan: other
-              // luxury options when Budget is Luxury, other low-cost ones
-              // when it's Low.
-              optionsForBudget(openSwap, budget, catalog)
-                .filter((o) => o.id !== picks[openSwap])
-                // The plan's pick plus up to 3 swaps.
-                .slice(0, 3)
-                .map((alt) => (
-                  <div key={alt.id} style={{ borderRadius: 20, background: "#F7F5EE", padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
-                    <span style={{ alignSelf: "flex-start", borderRadius: 999, padding: "6px 14px", fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", background: alt.tagBg, color: "#111111" }}>
-                      {alt.tag}
-                    </span>
-                    <span style={{ fontWeight: 600, fontSize: 18, color: "#111111" }}>{alt.title}</span>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      <a href={mapsUrl(alt.title, location.name)} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", gap: 6, textDecoration: "none" }}>
-                        <PinIcon />
-                        <span style={{ fontSize: 11, color: "#767766" }}>{alt.address}</span>
-                      </a>
-                      <a href={telHref(alt.phone)} style={{ display: "flex", alignItems: "center", gap: 6, textDecoration: "none" }}>
-                        <PhoneIcon />
-                        <span style={{ fontSize: 11, color: "#767766" }}>{alt.phone}</span>
-                      </a>
-                    </div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                      {(alt.meta || []).map((m, i) => (
-                        <span key={i} style={{ fontSize: 10, fontWeight: 600, borderRadius: 999, padding: "4px 10px", background: "#DFDACB", color: "#111111" }}>
-                          {m}
-                        </span>
-                      ))}
-                    </div>
-                    <div style={{ display: "flex" }}>
-                      <VenuePhotoTile kind="exterior" photo={alt.photos?.[0]} height={100} background={alt.tagBg} width={800} />
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 2 }}>
-                      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                        <span style={{ fontWeight: 600, fontSize: 18, color: "#111111" }}>{alt.price}</span>
-                        <span style={{ fontSize: 12, color: "#3E3E3A" }}>{alt.unit}</span>
-                      </div>
-                      <button
-                        onClick={() => {
-                          manualPicksRef.current = true;
-                          engagedRef.current = true;
-                          setPicks((p) => ({ ...p, [openSwap]: alt.id }));
-                          setOpenSwap(null);
-                        }}
-                        style={{ borderRadius: 999, padding: "8px 16px", fontSize: 10, fontWeight: 700, border: "1.5px solid #B9B4A6", color: "#767676", background: "none", cursor: "pointer" }}
-                      >
-                        SELECT
-                      </button>
-                    </div>
-                  </div>
-                ))}
-          </div>
-        </div>
-      </div>
 
       {/* Booking sheet — lists every selected item with a category-specific
           action: reserve a time for the bar, ticket link for live, auto-

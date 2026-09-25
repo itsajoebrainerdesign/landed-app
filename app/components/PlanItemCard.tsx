@@ -5,25 +5,25 @@ import { telHref } from "../lib/format";
 import type { CategoryOption } from "../lib/categoryOptions";
 
 // A single venue card in "Your Plan" — the ✕ (remove) button only renders
-// when onRemove is passed, and the bottom-right button's label/behavior
-// (e.g. "SWAP") is entirely up to the caller via actionLabel/onAction.
+// when onRemove is passed; `corner` fills the bottom-right (the carousel's
+// position dots).
 export function PlanItemCard({
   item,
-  actionLabel,
-  onAction,
+  corner,
   onRemove,
   area,
 }: {
   item: CategoryOption;
   // The plan's location name, for the address's Google Maps link.
   area?: string;
-  actionLabel: string;
-  onAction: () => void;
+  corner?: React.ReactNode;
   onRemove?: () => void;
 }) {
   const meta = item && item.meta ? item.meta : [];
   return (
-    <div style={{ borderRadius: 20, overflow: "hidden", width: "100%", position: "relative" }}>
+    // Fills its height: in a carousel, every option is as tall as the
+    // tallest, with the price bar kept at the bottom.
+    <div style={{ borderRadius: 20, overflow: "hidden", width: "100%", height: "100%", position: "relative", display: "flex", flexDirection: "column" }}>
       {onRemove && (
         <button
           onClick={onRemove}
@@ -33,7 +33,7 @@ export function PlanItemCard({
           <span style={{ fontSize: 15, fontWeight: 700, color: "#111111", lineHeight: 1 }}>✕</span>
         </button>
       )}
-      <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10, background: "#F7F5EE" }}>
+      <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10, background: "#F7F5EE", flex: "1 1 auto" }}>
         <span style={{ alignSelf: "flex-start", borderRadius: 999, padding: "6px 14px", fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", background: item.tagBg, color: "#111111" }}>
           {item.tag}
         </span>
@@ -64,9 +64,7 @@ export function PlanItemCard({
           <span style={{ fontWeight: 600, fontSize: 18, color: "#111111" }}>{item.price}</span>
           <span style={{ fontSize: 12, color: "#3E3E3A" }}>{item.unit}</span>
         </div>
-        <button onClick={onAction} style={{ borderRadius: 999, padding: "6px 14px", fontSize: 10, fontWeight: 700, border: "1.5px solid #B9B4A6", color: "#767676", background: "none", cursor: "pointer" }}>
-          {actionLabel}
-        </button>
+        {corner}
       </div>
     </div>
   );
