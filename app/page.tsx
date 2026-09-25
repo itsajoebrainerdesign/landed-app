@@ -27,6 +27,9 @@ function resultsFromSavedItems(items: Record<string, SavedItem>): LiveResults {
         vibes: (item.vibes ?? []) as VibeKey[],
         meta: item.meta,
         hasApiBooking: item.hasApiBooking,
+        lat: item.lat,
+        lng: item.lng,
+        photos: item.photos,
       },
     ];
   }
@@ -35,7 +38,8 @@ function resultsFromSavedItems(items: Record<string, SavedItem>): LiveResults {
 import { CATEGORY_ORDER, CATEGORY_LABELS, computePicks, mergeCatalog, optionsForBudget, emptyCatalog } from "./lib/categoryOptions";
 import { mapsUrl, ticketSearchUrl, bookingSearchUrl, stayBookingUrl, AFFILIATE_LINKS_ON } from "./lib/urls";
 import { telHref } from "./lib/format";
-import { PinIcon, PhoneIcon, PhotoIcon } from "./components/icons";
+import { PinIcon, PhoneIcon } from "./components/icons";
+import { VenuePhotoTile } from "./components/VenuePhotoTile";
 import { QuickDropdown } from "./components/QuickDropdown";
 import { PlanItemCard } from "./components/PlanItemCard";
 import { SectionHeading } from "./components/SectionHeading";
@@ -165,6 +169,9 @@ export default function Home() {
         vibes: (item.vibes ?? []) as VibeKey[],
         meta: item.meta,
         hasApiBooking: item.hasApiBooking,
+        lat: item.lat,
+        lng: item.lng,
+        photos: item.photos,
       });
     });
   }
@@ -994,8 +1001,8 @@ export default function Home() {
                         </span>
                       ))}
                     </div>
-                    <div style={{ height: 100, borderRadius: 12, background: alt.tagBg, border: "1px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <PhotoIcon kind="exterior" />
+                    <div style={{ display: "flex" }}>
+                      <VenuePhotoTile kind="exterior" photo={alt.photos?.[0]} height={100} background={alt.tagBg} />
                     </div>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 2 }}>
                       <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>

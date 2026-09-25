@@ -1,4 +1,5 @@
-import { PinIcon, PhoneIcon, PhotoIcon } from "./icons";
+import { PinIcon, PhoneIcon } from "./icons";
+import { VenuePhotoTile } from "./VenuePhotoTile";
 import { mapsUrl } from "../lib/urls";
 import { telHref } from "../lib/format";
 import type { CategoryOption } from "../lib/categoryOptions";
@@ -55,10 +56,8 @@ export function PlanItemCard({
           ))}
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          {(["exterior", "interior", "crowd"] as const).map((kind) => (
-            <div key={kind} style={{ flex: "1 1 0", height: 80, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", background: item.tagBg, border: "1px solid rgba(0,0,0,0.12)" }}>
-              <PhotoIcon kind={kind} />
-            </div>
+          {(["exterior", "interior", "crowd"] as const).map((kind, i) => (
+            <VenuePhotoTile key={kind} kind={kind} photo={item.photos?.[i]} height={80} background={item.tagBg} width={200} />
           ))}
         </div>
       </div>

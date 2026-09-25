@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TimeKey, VibeKey, BudgetKey } from "../../lib/constants";
 import { TIME_OPTIONS, VIBE_OPTIONS, BUDGET_OPTIONS } from "../../lib/constants";
-import type { CategoryKey, CategoryOption } from "../../lib/categoryOptions";
+import type { CategoryKey, CategoryOption, VenuePhoto } from "../../lib/categoryOptions";
 import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_STYLE } from "../../lib/categoryOptions";
 import { haversineKm } from "../../lib/geo";
 import { getServerSupabase } from "../../lib/supabase/server";
@@ -396,7 +396,7 @@ function localDate(lng: number): string {
 }
 
 function cacheKey(input: PlanRequest): string {
-  return `v2|${input.lat.toFixed(2)},${input.lng.toFixed(2)}|${input.vibe}|${localDate(input.lng)}`;
+  return `v3|${input.lat.toFixed(2)},${input.lng.toFixed(2)}|${input.vibe}|${localDate(input.lng)}`;
 }
 
 function readMemoryCache(key: string): PlanData | null {
@@ -873,6 +873,7 @@ type Place = {
   regularOpeningHours?: { periods?: OpeningPeriod[] };
   utcOffsetMinutes?: number;
   types?: string[];
+  photos?: { name: string; authorAttributions?: { displayName?: string }[] }[];
 };
 type Verified = { candidate: Candidate; place: Place; distanceKm: number };
 
@@ -890,6 +891,9 @@ const PLACES_FIELDS = [
   "places.regularOpeningHours.periods",
   "places.utcOffsetMinutes",
   "places.types",
+  // Same billing tier as the fields above, so no extra cost per search.
+  // (Each photo shown is billed separately — see app/api/photo.)
+  "places.photos",
 ].join(",");
 
 // Categories with a clear Places type must match it — otherwise a "car
@@ -1180,6 +1184,15 @@ function hoursOf(place: Place): OpeningHours | null {
   return periods?.length ? { periods, utcOffsetMinutes: place.utcOffsetMinutes } : null;
 }
 
+const PHOTOS_PER_VENUE = 3;
+function photosOf(place: Place): VenuePhoto[] | undefined {
+  const photos = (place.photos ?? []).slice(0, PHOTOS_PER_VENUE).map((p) => ({
+    name: p.name,
+    author: p.authorAttributions?.[0]?.displayName,
+  }));
+  return photos.length ? photos : undefined;
+}
+
 function assemble(verified: Verified[], input: PlanRequest): PlanData {
   const data = emptyPlan();
   const seen = new Set<string>();
@@ -1206,6 +1219,7 @@ function assemble(verified: Verified[], input: PlanRequest): PlanData {
       budget: candidate.budget,
       lat: place.location?.latitude,
       lng: place.location?.longitude,
+      photos: photosOf(place),
     };
     data.hours[option.id] = hoursOf(place);
 

@@ -8,6 +8,11 @@ import type { VibeKey, BudgetKey } from "./constants";
 
 export type CategoryKey = "stay" | "restaurant" | "attractions" | "bar" | "live" | "parking";
 
+// A Google Places photo: its resource name (served through /api/photo so
+// the key stays on the server) and who took it, which Google requires
+// shown alongside.
+export type VenuePhoto = { name: string; author?: string };
+
 export type CategoryOption = {
   id: string;
   tag: string;
@@ -32,6 +37,8 @@ export type CategoryOption = {
   // stay.
   lat?: number;
   lng?: number;
+  // Up to three photos from Google Places.
+  photos?: VenuePhoto[];
 };
 
 export const CATEGORY_ORDER: CategoryKey[] = ["stay", "restaurant", "attractions", "bar", "live", "parking"];
