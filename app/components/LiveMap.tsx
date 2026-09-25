@@ -70,17 +70,23 @@ async function locationProblem(): Promise<string> {
   return "Couldn't find your location just now — try again, or search for a place.";
 }
 
-// "Galway" rather than "Eyre Square" for sentences; the town plus country
-// for headings.
+// Names the spot at the most local level Google knows: the neighbourhood
+// ("Leverstock Green", "Kreuzberg") when there is one, otherwise the town.
+// `name` goes in sentences ("…in Leverstock Green"); `label` adds the
+// town (or country) for headings and for the live search, which uses it
+// together with the exact coordinates.
 function describePlace(
   point: LatLng,
   components: google.maps.places.AddressComponent[] | null | undefined,
   fallbackName: string
 ): PlanLocation {
   const part = (type: string) => components?.find((c) => c.types.includes(type))?.longText;
-  const town = part("locality") || part("postal_town") || part("administrative_area_level_2") || fallbackName;
+  const area = part("neighborhood") || part("sublocality_level_2") || part("sublocality_level_1") || part("sublocality");
+  const town = part("locality") || part("postal_town") || part("administrative_area_level_2");
   const country = part("country");
-  return { ...point, name: town, label: country && country !== town ? `${town}, ${country}` : town };
+  const name = area || town || fallbackName;
+  const context = area && town && area !== town ? town : country && country !== name ? country : undefined;
+  return { ...point, name, label: context ? `${name}, ${context}` : name };
 }
 
 declare global {

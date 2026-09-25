@@ -56,7 +56,17 @@ type LiveOptions = Partial<Record<CategoryKey, CategoryOption[]>>;
 type PlanResponse = { options: LiveOptions; source: "live" | "static"; warnings: string[] };
 
 const DEFAULT_LOCATION = "Galway, Ireland";
-const MAX_DISTANCE_KM = 25; // matches the Explore radius slider's max
+// Results are local to the exact point on the map: walking distance first,
+// and never further than this. Stays and car parks are sparser in quiet
+// areas, so they get a little more room.
+const MAX_DISTANCE_KM: Record<CategoryKey, number> = {
+  restaurant: 3,
+  bar: 3,
+  live: 5,
+  attractions: 5,
+  parking: 3,
+  stay: 8,
+};
 
 const MODEL = "claude-opus-5";
 const CANDIDATES_PER_CATEGORY = 5;
@@ -336,7 +346,11 @@ For the requested location, timeframe, and vibe, use web search to find up to ${
 ${CATEGORY_ORDER.map((c) => `- ${c} (${CATEGORY_LABELS[c]}): price_gbp is ${CATEGORY_UNITS[c]}`).join("\n")}
 
 Guidance:
-- Prefer places within about 5 km of the given coordinates, and include a spread of price points (budget through premium) in every category so the user's budget setting has real choices.
+- Stay local to the exact coordinates — the person has put a pin on the map and wants what's closest and most convenient to that spot, not the best of the wider town or city. Search the named neighbourhood and its streets, not the whole town.
+  - Aim for walking distance: within about 1 km of the pin.
+  - Only if a category has nothing good that close, widen to 3 km. Never suggest anything further than ${MAX_DISTANCE_KM.restaurant} km for restaurants, bars and parking, ${MAX_DISTANCE_KM.live} km for live and attractions, or ${MAX_DISTANCE_KM.stay} km for stays — anything beyond is discarded.
+  - Among good options, closer is better.
+- Include a spread of price points (budget through premium) in every category where the area has them, so the user's budget setting has real choices.
 - "live" means live music, comedy, theatre, or similar. Favour venues with something actually on during the timeframe, and put the act or show in "highlight".
 - Only include places you have good evidence are open for business now. Skip anything permanently closed.
 - "name" must be the venue's business name exactly as Google Maps would list it, since each one is verified against Google Places.
@@ -359,7 +373,7 @@ async function findCandidatesWithAI(input: PlanRequest, apiKey: string, warnings
     {
       role: "user",
       content:
-        `Location: ${input.location} (coordinates ${input.lat.toFixed(4)}, ${input.lng.toFixed(4)})\n` +
+        `Pin on the map: ${input.lat.toFixed(5)}, ${input.lng.toFixed(5)} — in ${input.location}. Find places closest to this exact spot.\n` +
         `Timeframe: ${describeTimeframe(input.time)}\nVibe: ${vibeLabel} (${input.vibe})`,
     },
   ];
@@ -489,11 +503,20 @@ const PLACES_FIELDS = [
   "places.types",
 ].join(",");
 
-// Categories whose Places type is unambiguous must match it — otherwise a
-// "car park" candidate can verify as the square it's named after.
-const REQUIRED_PLACE_TYPES: Partial<Record<CategoryKey, string[]>> = {
-  parking: ["parking", "parking_garage", "parking_lot"],
-  stay: ["lodging", "hotel", "bed_and_breakfast", "guest_house", "hostel", "motel", "inn", "resort_hotel"],
+// Categories with a clear Places type must match it — otherwise a "car
+// park" candidate can verify as the square it's named after, or a
+// "restaurant" as the village association that shares its area's name.
+// (Live and attractions are too varied to pin down this way.)
+const FOOD_TYPES = ["food", "cafe", "meal_takeaway", "meal_delivery", "pub", "bar", "bakery", "food_court"];
+const BAR_TYPES = ["bar", "pub", "night_club", "brewpub", "brewery", "winery", "beer_garden", "bar_and_grill"];
+const CATEGORY_TYPE_CHECK: Partial<Record<CategoryKey, (types: string[]) => boolean>> = {
+  parking: (types) => types.some((t) => ["parking", "parking_garage", "parking_lot"].includes(t)),
+  stay: (types) =>
+    types.some((t) => ["lodging", "hotel", "bed_and_breakfast", "guest_house", "hostel", "motel", "inn", "resort_hotel"].includes(t)),
+  restaurant: (types) => types.some((t) => t.endsWith("restaurant") || FOOD_TYPES.includes(t)),
+  // "_bar" suffix covers wine_bar, cocktail_bar, sports_bar… without
+  // matching barber_shop.
+  bar: (types) => types.some((t) => BAR_TYPES.includes(t) || t.endsWith("_bar")),
 };
 
 async function lookupPlace(candidate: Candidate, input: PlanRequest, apiKey: string): Promise<Place | null> {
@@ -503,7 +526,9 @@ async function lookupPlace(candidate: Candidate, input: PlanRequest, apiKey: str
     body: JSON.stringify({
       textQuery: `${candidate.name}, ${input.location}`,
       maxResultCount: 1,
-      locationBias: { circle: { center: { latitude: input.lat, longitude: input.lng }, radius: 20000 } },
+      // Tight bias so a common name ("Costa", "Premier Inn") matches the
+      // branch by the pin, not one across town.
+      locationBias: { circle: { center: { latitude: input.lat, longitude: input.lng }, radius: 3000 } },
     }),
     signal: AbortSignal.timeout(10_000),
     cache: "no-store",
@@ -546,10 +571,10 @@ async function verifyWithGooglePlaces(
     // Text Search always returns its closest match, even for a name that
     // doesn't exist — reject it unless the names actually share a word.
     if (!namesMatch(candidates[i].name, place.displayName.text)) return;
-    const required = REQUIRED_PLACE_TYPES[candidates[i].category];
-    if (required && !place.types?.some((t) => required.includes(t))) return;
+    const typeCheck = CATEGORY_TYPE_CHECK[candidates[i].category];
+    if (typeCheck && !typeCheck(place.types ?? [])) return;
     const distanceKm = haversineKm({ lat: input.lat, lng: input.lng }, { lat: place.location.latitude, lng: place.location.longitude });
-    if (distanceKm > MAX_DISTANCE_KM) return;
+    if (distanceKm > MAX_DISTANCE_KM[candidates[i].category]) return;
     verified.push({ candidate: candidates[i], place, distanceKm });
   });
   if (failures > 0) {
