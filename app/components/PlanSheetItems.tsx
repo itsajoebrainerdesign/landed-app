@@ -3,7 +3,7 @@ import { SaveInMapsLink } from "./SaveInMapsLink";
 import { CTA_GRADIENT } from "../lib/constants";
 import { planItemLink } from "../lib/urls";
 import { telHref } from "../lib/format";
-import { partnerLink } from "../lib/affiliates";
+import { partnerLink, travelLinks } from "../lib/affiliates";
 
 type SheetItem = {
   tag: string;
@@ -27,12 +27,19 @@ export function PlanSheetItems({
   area,
   time,
   vibe,
+  place,
 }: {
   items: [string, SheetItem][];
   area?: string;
   time?: string;
   vibe?: string;
+  // The plan's location, for "Getting there".
+  place?: { lat?: number; lng?: number; name?: string };
 }) {
+  // Train, coach, car hire and parking from the travel partners that are
+  // set up (nothing shows until one is).
+  const travel = items.length > 0 && place ? travelLinks(place) : [];
+  const tracked = travel.length > 0 || items.some(([cat, item]) => !item.hasApiBooking && partnerLink(cat, item, { time, vibe }));
   return (
     <>
       {items.map(([cat, item]) => {
@@ -76,9 +83,29 @@ export function PlanSheetItems({
           </div>
         );
       })}
+      {travel.length > 0 && (
+        <div style={{ borderRadius: 20, background: "#F7F5EE", padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+          <span style={{ fontWeight: 600, fontSize: 18, color: "#111111" }}>Getting there</span>
+          {travel.map((t) => (
+            <a
+              key={t.detail}
+              href={t.href}
+              target="_blank"
+              rel="noopener noreferrer sponsored"
+              style={{ display: "flex", alignItems: "center", justifyContent: "space-between", textDecoration: "none", color: "#111111" }}
+            >
+              <span style={{ display: "flex", flexDirection: "column" }}>
+                <span style={{ fontSize: 14, fontWeight: 600 }}>{t.label}</span>
+                <span style={{ fontSize: 12, color: "#767766" }}>{t.detail}</span>
+              </span>
+              <span style={{ borderRadius: 999, padding: "8px 14px", fontSize: 11, fontWeight: 700, background: CTA_GRADIENT }}>Open ↗</span>
+            </a>
+          ))}
+        </div>
+      )}
       {/* Affiliate disclosure (UK advertising rules), whenever a tracked
-          link is showing: Booking.com for stays, or a partner link. */}
-      {items.some(([cat, item]) => !item.hasApiBooking && partnerLink(cat, item, { time, vibe })) && (
+          link is showing. */}
+      {tracked && (
         <span style={{ fontSize: 11, color: "#767766" }}>We may earn a commission if you book through some of these links.</span>
       )}
     </>

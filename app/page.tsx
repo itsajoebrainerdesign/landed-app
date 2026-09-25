@@ -1022,6 +1022,7 @@ export default function Home() {
             <PlanSheetItems
               items={bookableCategories.map((cat) => [cat, findOption(cat, picks[cat])!])}
               area={location.name}
+              place={location}
               time={time}
               vibe={vibe}
             />

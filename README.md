@@ -28,18 +28,19 @@ drink, see something live, and park — around a place and a vibe.
   confirmed plans are stored per user. Signed-out visitors can still make
   and save plans on their device; those move into their account the first
   time they sign in.
-- **Affiliate booking links** (`app/lib/affiliates.ts`): results are
-  chosen for the person; affiliates never affect which venues are picked.
-  Each venue's main button goes to its own website (tickets search for
-  attractions/live without one, directions for parking) — unless the
-  venue has a confirmed page on a partner (`partnerUrl`) and that
-  partner's programme is set up, in which case it books there, tracked:
-  Booking.com (stays, with dates and party size filled in), OpenTable
-  (restaurants, bars), Ticketmaster (live), GetYourGuide (attractions),
-  JustPark (parking). Never a partner-site search. A short commission
-  disclosure shows whenever a tracked link does. IDs: `.env.local.example`.
-  Checking which venues each partner lists isn't built yet — until it
-  is, every button goes to the venue's own website.
+- **Affiliate links** (`app/lib/affiliates.ts`, `app/lib/partnerChecks.ts`):
+  results are chosen for the person; affiliates never affect which venues
+  are picked. Each venue's main button goes to its own website — unless a
+  partner check confirmed the venue's exact page on a partner whose
+  programme is set up, in which case it books there, tracked (stays get
+  dates and party size filled in). Never a partner-site search. Checks
+  built: Ticketmaster and Skiddle (live), Viator (attractions); Booking.com,
+  Expedia, Tiqets, GetYourGuide and OpenTable follow once their partner
+  APIs are approved. "Getting there" on the plan sheets links to the travel
+  partners that are set up (Trainline, National Express, FlixBus, Megabus in
+  Scotland, Rentalcars.com, JustPark, YourParkingSpace). A commission
+  disclosure shows whenever a tracked link does. Settings:
+  `.env.local.example`.
 - **Not built yet**: payments (Stripe — the Account page's payment section
   is a placeholder), partner booking APIs (the "Connect" buttons are
   disabled), and plans shared between users (Explore says "No plans in

@@ -8,6 +8,7 @@ import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_STYLE } from "../../lib/categ
 import { haversineKm } from "../../lib/geo";
 import { getServerSupabase } from "../../lib/supabase/server";
 import { getAdminSupabase } from "../../lib/supabase/admin";
+import { findPartnerPages, partnerChecksSignature } from "../../lib/partnerChecks";
 
 /**
  * POST /api/plan
@@ -396,7 +397,7 @@ function localDate(lng: number): string {
 }
 
 function cacheKey(input: PlanRequest): string {
-  return `v4|${input.lat.toFixed(2)},${input.lng.toFixed(2)}|${input.vibe}|${localDate(input.lng)}`;
+  return `v4${partnerChecksSignature()}|${input.lat.toFixed(2)},${input.lng.toFixed(2)}|${input.vibe}|${localDate(input.lng)}`;
 }
 
 function readMemoryCache(key: string): PlanData | null {
@@ -582,6 +583,8 @@ async function buildPlan(input: PlanRequest, emit: Emit): Promise<BuildResult> {
       });
       if (part) aiDone++;
       const use = part ?? draft;
+      // Which of these venues an affiliate partner lists (exact pages only).
+      await findPartnerPages(cat, categoryOptionsOf(use, cat), { lat: input.lat, lng: input.lng, location: input.location });
       mergeCategory(result, use, cat);
       emit({ type: "category", category: cat, options: serveCategory(use, cat, Date.now()) });
     })
@@ -622,6 +625,16 @@ function draftFromLists(lists: NearbyLists, input: PlanRequest): PlanData {
     }
   }
   return assemble(verified, input);
+}
+
+// Every distinct option in a category, across the timeframes and pool
+// (the same objects, so setting a field on one sets it everywhere).
+function categoryOptionsOf(data: PlanData, cat: CategoryKey): CategoryOption[] {
+  const seen = new Map<string, CategoryOption>();
+  for (const list of [data.pool[cat], data.tonight[cat], data.tomorrow[cat]]) {
+    for (const o of list ?? []) if (!seen.has(o.id)) seen.set(o.id, o);
+  }
+  return [...seen.values()];
 }
 
 function kindLabel(place: Place): string {
