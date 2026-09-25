@@ -6,11 +6,12 @@ drink, see something live, and park — around a place and a vibe.
 ## What's in it
 
 - **Booking flow** (`app/page.tsx`): on opening, the browser asks to use
-  the device's location; if allowed, the map centres there and the plan
-  appears for that place. If not, the page stays at the map (a wide UK &
-  Ireland view) until a place is searched. Then pick When / Vibe / Budget,
-  swap or remove venue cards, and open the booking sheet. The + button
-  saves the current plan and starts a fresh one from the device location.
+  the device's location; if allowed, the map centres there (otherwise a
+  wide UK & Ireland view). Nothing is searched until the person taps
+  **Use my location** or searches a place — then the plan appears. Pick
+  When / Vibe / Budget, swap or remove venue cards, and open the booking
+  sheet. Plans auto-save as drafts; the + button saves the current plan
+  and starts a fresh enquiry, locked at the map again.
   Browsers only share location over HTTPS (or localhost) — on
   `http://192.168…` from a phone, it falls back to searching.
 - **Live venue search** (`app/api/plan/route.ts`): Claude (with web

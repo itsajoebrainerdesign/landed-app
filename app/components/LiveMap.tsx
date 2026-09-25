@@ -7,12 +7,13 @@ import type { LatLng, PlanLocation } from "../lib/geo";
 // search box floating over its top edge.
 //
 // On load it asks for the device's location (the browser shows its own
-// "allow location?" prompt). If allowed, the map centres there, drops a
-// marker, and reports the place via onPlaceSelect — which is what unlocks
-// the rest of the page. If refused or unavailable (no permission, no GPS,
-// or a non-HTTPS page — browsers only share location over HTTPS or
-// localhost), the map stays on a wide UK & Ireland view until the person
-// searches. Picking a search result does the same as a found location.
+// "allow location?" prompt). If allowed, the map centres there with a
+// marker — but that's all: no place is chosen and nothing is searched
+// until the person taps "Use my location" or picks a search result, which
+// reports the place via onPlaceSelect and unlocks the rest of the page.
+// If refused or unavailable (no permission, no GPS, or a non-HTTPS page —
+// browsers only share location over HTTPS or localhost), the map stays on
+// a wide UK & Ireland view.
 // When `location` changes from outside (e.g. a saved plan is loaded), the
 // map pans to it.
 //
@@ -131,16 +132,22 @@ export function LiveMap({
   location,
   onPlaceSelect,
   resetSignal,
+  autoLocateAllowed,
 }: {
   className?: string;
   style?: React.CSSProperties;
   location?: PlanLocation;
-  // `source`: a search result, the "Use my location" button, or the
-  // automatic location on opening.
-  onPlaceSelect?: (place: PlanLocation, source: "search" | "device-button" | "device-auto") => void;
+  // Called when a place is chosen: a search result, or the "Use my
+  // location" button. (The automatic location on opening only moves the
+  // map — it doesn't choose a place, so no search runs by itself.)
+  onPlaceSelect?: (place: PlanLocation, source: "search" | "device-button") => void;
   // Changing this clears the search box and marker and goes back to the
   // device's location (used when + starts a new enquiry).
   resetSignal?: number;
+  // Asked when the device location arrives: whether to use it
+  // automatically. False while a saved plan is opening, which brings its
+  // own place. ("Use my location" is always allowed.)
+  autoLocateAllowed?: () => boolean;
 }) {
   const mapRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
@@ -150,6 +157,8 @@ export function LiveMap({
   onPlaceSelectRef.current = onPlaceSelect;
   const locationRef = useRef(location);
   locationRef.current = location;
+  const autoLocateAllowedRef = useRef(autoLocateAllowed);
+  autoLocateAllowedRef.current = autoLocateAllowed;
   const [failed, setFailed] = useState(false);
   const resetRef = useRef<(() => void) | null>(null);
   // "Use my location" button: set once the map is ready.
@@ -276,6 +285,10 @@ export function LiveMap({
           marker.position = point;
           marker.map = map;
           if (autocomplete) autocomplete.locationBias = { center: point, radius: 20000 };
+          // On opening the app (or after +), just show where they are.
+          // The plan — and its search, which costs money — only starts
+          // when they tap "Use my location" or search a place.
+          if (source === "device-auto") return;
           let described: PlanLocation = { ...point, name: "your area", label: "Your location" };
           try {
             const { places } = await Place.searchNearby({
@@ -288,7 +301,7 @@ export function LiveMap({
           } catch (err) {
             console.warn("[Landed] couldn't name the current location", err);
           }
-          if (!cancelled) onPlaceSelectRef.current?.(described, source);
+          if (!cancelled && source === "device-button") onPlaceSelectRef.current?.(described, source);
         };
 
         // Apply the device location unless a place was already chosen
@@ -296,6 +309,7 @@ export function LiveMap({
         const applyDeviceLocation = async () => {
           const point = await deviceLocation;
           if (cancelled || !point || locationRef.current) return;
+          if (autoLocateAllowedRef.current && !autoLocateAllowedRef.current()) return;
           await centreOnDevice(point, "device-auto");
         };
 

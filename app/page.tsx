@@ -7,6 +7,31 @@ import type { CategoryKey, CategoryOption, Catalog } from "./lib/categoryOptions
 
 // /api/plan's results: per timeframe, per category.
 type LiveResults = Partial<Record<TimeKey, Partial<Catalog>>>;
+
+// For a saved plan without its search results: its own venues, as the
+// only option in each category, for every timeframe.
+function resultsFromSavedItems(items: Record<string, SavedItem>): LiveResults {
+  const byCat: Partial<Catalog> = {};
+  for (const [cat, item] of Object.entries(items)) {
+    if (!item.id || !item.address || !item.meta) continue; // very old saves: display fields only
+    byCat[cat as CategoryKey] = [
+      {
+        id: item.id,
+        tag: item.tag,
+        tagBg: item.tagBg,
+        title: item.title,
+        price: item.price,
+        unit: item.unit,
+        address: item.address,
+        phone: item.phone ?? "",
+        vibes: (item.vibes ?? []) as VibeKey[],
+        meta: item.meta,
+        hasApiBooking: item.hasApiBooking,
+      },
+    ];
+  }
+  return { now: byCat, tonight: byCat, tomorrow: byCat };
+}
 import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_OPTIONS, computePicks, mergeCatalog } from "./lib/categoryOptions";
 import { mapsUrl, ticketSearchUrl, bookingSearchUrl } from "./lib/urls";
 import { telHref } from "./lib/format";
@@ -172,6 +197,15 @@ export default function Home() {
   const resultsCacheRef = useRef(new Map<string, LiveResults>());
   const resultsKey = (p: { lat: number; lng: number }, v: VibeKey) => `${p.lat.toFixed(3)},${p.lng.toFixed(3)}|${v}`;
 
+  // Opening a saved plan (?load=…): the plan brings its own place, so the
+  // map mustn't jump to the device location on its own — that would
+  // start a fresh search where the person happens to be standing. Read
+  // straight from the URL on the first client render, because the map
+  // asks for the device location as soon as it mounts.
+  const openingSavedPlanRef = useRef(
+    typeof window !== "undefined" && new URLSearchParams(window.location.search).has("load")
+  );
+
   // Vibe and Budget re-run the closest-match-preferring-vibe pick for every
   // category, so Your Plan actually reflects the answer — this replaces any
   // manual swaps with the new best fit. Done here in the handlers rather
@@ -200,10 +234,11 @@ export default function Home() {
   // The map's search box moved the plan. The previous live results were
   // for the old place, so drop them; near Galway the static catalog shows
   // meanwhile, elsewhere the plan waits for live results.
-  // `source` says how: a search or the "Use my location" button count as
-  // the person engaging; the automatic location on opening doesn't.
-  function selectLocation(next: PlanLocation, source: "search" | "device-button" | "device-auto" = "search") {
-    if (source !== "device-auto") engagedRef.current = true;
+  // Only ever called by a person's action (a search, or the "Use my
+  // location" button) — the automatic location on opening just moves the
+  // map — so this is where a search can start.
+  function selectLocation(next: PlanLocation) {
+    engagedRef.current = true;
     setLocationChosen(true);
     setLocation(next);
     setLiveOptions(null);
@@ -442,15 +477,16 @@ export default function Home() {
         if (!found) return;
         draftIdRef.current = found.id;
         engagedRef.current = true;
-        // The plan's own search results come with it, so reopening it
-        // restores its swaps and timeframes without searching again.
-        if (found.liveResults && found.location) {
-          const restored = found.liveResults as LiveResults;
-          Object.values(restored).forEach((byCat) =>
-            Object.values(byCat ?? {}).forEach((opts) => opts?.forEach((o) => knownOptionsRef.current.set(o.id, o)))
-          );
-          resultsCacheRef.current.set(resultsKey(found.location, found.vibe as VibeKey), restored);
-        }
+        // Reopening a plan never searches: it comes back from what was
+        // found before. With its saved search results that's everything
+        // (swaps and all three timeframes); for plans saved without them
+        // (older plans, or before the live_results column existed) it's
+        // rebuilt from the venues saved in the plan itself.
+        const restored: LiveResults = (found.liveResults as LiveResults | undefined) ?? resultsFromSavedItems(found.items);
+        Object.values(restored).forEach((byCat) =>
+          Object.values(byCat ?? {}).forEach((opts) => opts?.forEach((o) => knownOptionsRef.current.set(o.id, o)))
+        );
+        resultsCacheRef.current.set(resultsKey(found.location ?? DEFAULT_LOCATION, found.vibe as VibeKey), restored);
         setLocationChosen(true);
         manualPicksRef.current = true;
         rememberSavedItems(found.items);
@@ -467,6 +503,9 @@ export default function Home() {
       })
       .catch(() => {
         // ignore — just falls back to a blank booking
+      })
+      .finally(() => {
+        openingSavedPlanRef.current = false;
       });
   }, []);
 
@@ -630,6 +669,7 @@ export default function Home() {
             style={{ flex: "1 1 auto", minHeight: 0 }}
             location={locationChosen ? location : undefined}
             onPlaceSelect={selectLocation}
+            autoLocateAllowed={() => !openingSavedPlanRef.current}
             resetSignal={mapResetSignal}
           />
         </div>
