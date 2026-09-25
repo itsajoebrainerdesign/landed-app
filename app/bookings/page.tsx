@@ -130,6 +130,30 @@ function ViewBookingSheet({
   const open = !!booking;
   // Nothing behind the sheet can be scrolled or touched while it's open.
   useSheetLock(open);
+
+  // Drag-to-close, as on the home page's sheets: the handle bar tracks a
+  // downward drag, and letting go past 110px closes the sheet — otherwise
+  // it springs back.
+  const [dragY, setDragY] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const startY = useRef(0);
+  const dragYRef = useRef(0);
+  function handleDown(e: React.PointerEvent) {
+    setDragging(true);
+    startY.current = e.clientY;
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+  function handleMove(e: React.PointerEvent) {
+    if (!dragging) return;
+    dragYRef.current = Math.max(0, e.clientY - startY.current);
+    setDragY(dragYRef.current);
+  }
+  function handleUp() {
+    setDragging(false);
+    if (dragYRef.current > 110) onClose();
+    dragYRef.current = 0;
+    setDragY(0);
+  }
   const items = booking ? Object.entries(booking.items) : [];
 
   return (
@@ -162,11 +186,17 @@ function ViewBookingSheet({
           background: "#FFFFFF",
           height: "92vh",
           maxHeight: "92vh",
-          transform: open ? "translateY(0%)" : "translateY(100%)",
-          transition: "transform 300ms",
+          transform: open ? `translateY(${dragY}px)` : "translateY(100%)",
+          transition: dragging ? "none" : "transform 300ms",
         }}
       >
-        <div style={{ display: "flex", justifyContent: "center", paddingTop: 12, paddingBottom: 8, flexShrink: 0 }}>
+        <div
+          onPointerDown={handleDown}
+          onPointerMove={handleMove}
+          onPointerUp={handleUp}
+          onPointerCancel={handleUp}
+          style={{ display: "flex", justifyContent: "center", paddingTop: 12, paddingBottom: 8, flexShrink: 0, touchAction: "none", cursor: dragging ? "grabbing" : "grab" }}
+        >
           <div style={{ width: 40, height: 5, borderRadius: 999, background: "#D9D9D9" }} />
         </div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px 4px", flexShrink: 0 }}>
