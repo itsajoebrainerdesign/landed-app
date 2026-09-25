@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { CTA_GRADIENT } from "../lib/constants";
 import type { LatLng, PlanLocation } from "../lib/geo";
 
 // The intake screen's map: a real Google Map with a Places Autocomplete
@@ -9,8 +10,10 @@ import type { LatLng, PlanLocation } from "../lib/geo";
 // On load it asks for the device's location (the browser shows its own
 // "allow location?" prompt). If allowed, the map centres there with a
 // marker — but that's all: no place is chosen and nothing is searched
-// until the person taps "Use my location" or picks a search result, which
-// reports the place via onPlaceSelect and unlocks the rest of the page.
+// until the person taps "Use my location", or picks a search result and
+// then taps "Use selected location" (picking a result only moves the map,
+// since every search costs one of their limited searches). Either reports
+// the place via onPlaceSelect and unlocks the rest of the page.
 // If refused or unavailable (no permission, no GPS, or a non-HTTPS page —
 // browsers only share location over HTTPS or localhost), the map stays on
 // a wide UK & Ireland view.
@@ -152,8 +155,8 @@ export function LiveMap({
   className?: string;
   style?: React.CSSProperties;
   location?: PlanLocation;
-  // Called when a place is chosen: a search result, or the "Use my
-  // location" button. (The automatic location on opening only moves the
+  // Called when a place is chosen: "Use selected location" after picking
+  // a search result, or the "Use my location" button. (The automatic location on opening only moves the
   // map — it doesn't choose a place, so no search runs by itself.)
   onPlaceSelect?: (place: PlanLocation, source: "search" | "device-button") => void;
   // Changing this clears the search box and marker and goes back to the
@@ -181,9 +184,19 @@ export function LiveMap({
   const [mapReady, setMapReady] = useState(false);
   const [locating, setLocating] = useState(false);
   const [locateNote, setLocateNote] = useState<string | null>(null);
+  // The search result picked in the box, shown on the map but not used
+  // until "Use selected location" is tapped.
+  const [pending, setPending] = useState<PlanLocation | null>(null);
+
+  function confirmSelected() {
+    if (!pending) return;
+    onPlaceSelectRef.current?.(pending, "search");
+    setPending(null);
+  }
 
   async function handleLocate() {
     if (!locateRef.current || locating) return;
+    setPending(null);
     setLocating(true);
     setLocateNote(null);
     const ok = await locateRef.current();
@@ -282,9 +295,9 @@ export function LiveMap({
             }
             marker.setPosition(place.location ?? null);
             marker.setMap(place.location ? map : null);
-            if (place.location) {
+            if (place.location && !cancelled) {
               const point = { lat: place.location.lat(), lng: place.location.lng() };
-              onPlaceSelectRef.current?.(describePlace(point, place.addressComponents, place.displayName || ""), "search");
+              setPending(describePlace(point, place.addressComponents, place.displayName || ""));
             }
           } catch (err) {
             console.warn("[Landed] couldn't load the selected place", err);
@@ -340,6 +353,7 @@ export function LiveMap({
         };
         setMapReady(true);
         resetRef.current = () => {
+          setPending(null);
           marker.setMap(null);
           autocomplete?.remove();
           mountAutocomplete();
@@ -387,6 +401,7 @@ export function LiveMap({
               {locateNote}
             </span>
           )}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
           <button
             onClick={handleLocate}
             disabled={locating}
@@ -415,6 +430,34 @@ export function LiveMap({
             </svg>
             {locating ? "Finding you…" : "Use my location"}
           </button>
+          {pending && (
+            <button
+              onClick={confirmSelected}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "8px 14px",
+                borderRadius: 999,
+                fontSize: 12,
+                fontWeight: 700,
+                fontFamily: "inherit",
+                color: "#111111",
+                background: CTA_GRADIENT,
+                border: "none",
+                boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
+                cursor: "pointer",
+                pointerEvents: "auto",
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#111111" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z" />
+                <circle cx="12" cy="9.5" r="2.5" />
+              </svg>
+              Use selected location
+            </button>
+          )}
+          </div>
         </div>
       )}
     </div>
