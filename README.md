@@ -32,8 +32,12 @@ drink, see something live, and park — around a place and a vibe.
   with the dates filled in (Tonight/Now → tonight, Tomorrow → tomorrow
   night, 2 adults). Set `NEXT_PUBLIC_BOOKING_AFFILIATE_ID` (your Booking.com
   Affiliate Partner ID) to earn commission; the booking sheet then shows a
-  short affiliate disclosure. Restaurants, bars and tickets still open a
-  web search until other affiliate programmes are added.
+  short affiliate disclosure. Restaurants, bars, attractions, live and
+  parking link to the venue (its website, a ticket search, directions);
+  once their programmes are set up (`app/lib/affiliates.ts`), each card
+  also gets a tracked partner link — OpenTable (restaurants and bars),
+  Ticketmaster (live), GetYourGuide (attractions), JustPark (parking).
+  See `.env.local.example` for the IDs each one needs.
 - **Not built yet**: payments (Stripe — the Account page's payment section
   is a placeholder), partner booking APIs (the "Connect" buttons are
   disabled), and plans shared between users (Explore says "No plans in

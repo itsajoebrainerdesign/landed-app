@@ -3,6 +3,7 @@ import { SaveInMapsLink } from "./SaveInMapsLink";
 import { CTA_GRADIENT } from "../lib/constants";
 import { planItemLink, AFFILIATE_LINKS_ON } from "../lib/urls";
 import { telHref } from "../lib/format";
+import { partnerLink } from "../lib/affiliates";
 
 type SheetItem = {
   tag: string;
@@ -39,6 +40,7 @@ export function PlanSheetItems({
     <>
       {items.map(([cat, item]) => {
         const link = planItemLink(cat, item, area, time, vibe, areaPos);
+        const partner = item.hasApiBooking ? null : partnerLink(cat, item, area);
         return (
           <div key={cat} style={{ borderRadius: 20, background: "#F7F5EE", padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
             <span style={{ alignSelf: "flex-start", borderRadius: 999, padding: "6px 14px", fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", background: item.tagBg, color: "#111111" }}>
@@ -72,12 +74,23 @@ export function PlanSheetItems({
                 </a>
               )}
             </div>
+            {partner && (
+              <a
+                href={partner.href}
+                target="_blank"
+                rel="noopener noreferrer sponsored"
+                style={{ alignSelf: "flex-end", fontSize: 11, fontWeight: 700, color: "#111111", textDecoration: "underline" }}
+              >
+                {partner.label}
+              </a>
+            )}
           </div>
         );
       })}
-      {/* Affiliate disclosure (UK advertising rules), once affiliate links are live. */}
-      {AFFILIATE_LINKS_ON && items.some(([cat]) => cat === "stay") && (
-        <span style={{ fontSize: 11, color: "#767766" }}>We may earn a commission if you book a stay through these links.</span>
+      {/* Affiliate disclosure (UK advertising rules), whenever a tracked
+          link is showing: Booking.com for stays, or a partner link. */}
+      {items.some(([cat, item]) => (cat === "stay" && AFFILIATE_LINKS_ON) || (!item.hasApiBooking && partnerLink(cat, item, area))) && (
+        <span style={{ fontSize: 11, color: "#767766" }}>We may earn a commission if you book through some of these links.</span>
       )}
     </>
   );
