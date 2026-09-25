@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { TimeKey, VibeKey, BudgetKey } from "./lib/constants";
-import { TIME_OPTIONS, VIBE_OPTIONS, BUDGET_OPTIONS, CTA_GRADIENT, normalizeBudget } from "./lib/constants";
+import type { TimeKey, VibeKey, BudgetKey, TravelMode } from "./lib/constants";
+import { TIME_OPTIONS, VIBE_OPTIONS, BUDGET_OPTIONS, TRAVEL_OPTIONS, DEFAULT_TRAVEL, CTA_GRADIENT, normalizeBudget, normalizeTravel } from "./lib/constants";
 import type { CategoryKey, CategoryOption, Catalog } from "./lib/categoryOptions";
 
 // /api/plan's results: per timeframe, per category.
@@ -49,7 +49,7 @@ import { getBooking, saveBooking, newBookingId } from "./lib/bookingsStore";
 import type { SavedItem, SavedLiveResults } from "./lib/bookingsStore";
 import type { PlanLocation } from "./lib/geo";
 import { NO_LOCATION } from "./lib/geo";
-import { LandedLogo } from "./components/LandedLogo";
+import { TransitIcon, CarIcon, CampervanIcon } from "./components/icons";
 
 const WHEN_MENU = (["now", "tonight", "tomorrow"] as TimeKey[]).map(
   (k) => TIME_OPTIONS.find((o) => o.key === k)!
@@ -82,6 +82,9 @@ export default function Home() {
   const [radius, setRadius] = useState(5);
   const [time, setTime] = useState<TimeKey>("now");
   const [vibe, setVibe] = useState<VibeKey>("nightout");
+  // How they're travelling — chosen under the map before confirming, so
+  // the search only looks for what's relevant (see TRAVEL_OPTIONS).
+  const [travel, setTravel] = useState<TravelMode>(DEFAULT_TRAVEL);
   const [budget, setBudget] = useState<BudgetKey>("modest");
   const [bookingOpen, setBookingOpen] = useState(false);
   const [bookingsConfirmed, setBookingsConfirmed] = useState(false);
@@ -200,7 +203,7 @@ export default function Home() {
   // so going back to a place/vibe — or opening a saved plan that carries
   // its results — never searches again.
   const resultsCacheRef = useRef(new Map<string, LiveResults>());
-  const resultsKey = (p: { lat: number; lng: number }, v: VibeKey) => `${p.lat.toFixed(3)},${p.lng.toFixed(3)}|${v}`;
+  const resultsKey = (p: { lat: number; lng: number }, v: VibeKey, t: TravelMode) => `${p.lat.toFixed(3)},${p.lng.toFixed(3)}|${v}|${t}`;
 
   // Opening a saved plan (?load=…): the plan brings its own place, so the
   // map mustn't jump to the device location on its own — that would
@@ -221,6 +224,15 @@ export default function Home() {
     setVibe(next);
     manualPicksRef.current = false;
     setPicks(computePicks(next, budget, catalog));
+  }
+  // A different way of travelling needs a different search (stations vs
+  // car parks, campsites for campervans); results for each are kept, so
+  // switching back is instant.
+  function selectTravel(next: TravelMode) {
+    if (next === travel) return;
+    engagedRef.current = true;
+    manualPicksRef.current = false;
+    setTravel(next);
   }
   function selectBudget(next: BudgetKey) {
     engagedRef.current = true;
@@ -277,7 +289,7 @@ export default function Home() {
     // Nothing is shown until a location is chosen, so don't spend a live
     // search (or the user's allowance) on the default before then.
     if (!locationChosen) return;
-    const cacheKey = resultsKey(location, vibe);
+    const cacheKey = resultsKey(location, vibe, travel);
     const cached = resultsCacheRef.current.get(cacheKey);
     if (cached) {
       // Already have results for this place and vibe — no new search.
@@ -336,7 +348,7 @@ export default function Home() {
     fetch("/api/plan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ location: location.label, lat: location.lat, lng: location.lng, vibe }),
+      body: JSON.stringify({ location: location.label, lat: location.lat, lng: location.lng, vibe, travel }),
       signal: controller.signal,
     })
       .then(async (res) => {
@@ -374,7 +386,7 @@ export default function Home() {
         }
       });
     return () => controller.abort();
-  }, [vibe, location, locationChosen]);
+  }, [vibe, travel, location, locationChosen]);
 
   // Until a location is chosen, the page stops at the map: Your Plan and
   // Explore aren't rendered and the page can't scroll, so the first step
@@ -524,7 +536,7 @@ export default function Home() {
         Object.values(restored).forEach((byCat) =>
           Object.values(byCat ?? {}).forEach((opts) => opts?.forEach((o) => knownOptionsRef.current.set(o.id, o)))
         );
-        if (found.location) resultsCacheRef.current.set(resultsKey(found.location, found.vibe as VibeKey), restored);
+        if (found.location) resultsCacheRef.current.set(resultsKey(found.location, found.vibe as VibeKey, normalizeTravel(found.travel)), restored);
         setLocationChosen(true);
         manualPicksRef.current = true;
         rememberSavedItems(found.items);
@@ -533,6 +545,7 @@ export default function Home() {
           setLiveOptions(null);
         }
         setVibe(found.vibe as VibeKey);
+        setTravel(normalizeTravel(found.travel));
         setTime(found.time as TimeKey);
         setBudget(normalizeBudget(found.budget));
         setPicks(found.picks as Record<CategoryKey, string>);
@@ -567,6 +580,7 @@ export default function Home() {
       picks,
       items,
       vibe,
+      travel,
       time,
       budget,
       removedCategories,
@@ -620,7 +634,7 @@ export default function Home() {
     window.addEventListener("landed:new-booking", handleNewBooking);
     return () => window.removeEventListener("landed:new-booking", handleNewBooking);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [planSummary, picks, vibe, time, budget, removedCategories, bookingsConfirmed, catalog, location, locationChosen, visibleCategories, liveOptions]);
+  }, [planSummary, picks, vibe, travel, time, budget, removedCategories, bookingsConfirmed, catalog, location, locationChosen, visibleCategories, liveOptions]);
 
   // Auto-save: once the person has done something with a plan that has
   // venues in it, keep it saved as a draft (or as their confirmed booking,
@@ -631,7 +645,7 @@ export default function Home() {
     const t = window.setTimeout(() => savePlan(), 1200);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [picks, vibe, time, budget, removedCategories, location, liveOptions, bookingsConfirmed, liveLoading, locationChosen]);
+  }, [picks, vibe, travel, time, budget, removedCategories, location, liveOptions, bookingsConfirmed, liveLoading, locationChosen]);
 
   function handleBookPlan() {
     setBookingOpen(true);
@@ -696,7 +710,6 @@ export default function Home() {
           className="w-full px-[21px] flex-1 flex flex-col gap-5"
           style={{ position: "relative", zIndex: 2, paddingTop: 90 }}
         >
-          <LandedLogo />
           <SectionHeading hideArrow>Where would you like to L↘nd?</SectionHeading>
 
           <LiveMap
@@ -707,6 +720,56 @@ export default function Home() {
             autoLocateAllowed={() => !openingSavedPlanRef.current}
             resetSignal={mapResetSignal}
           />
+          {/* How they're travelling — decides what the search looks for, so
+              it's chosen before confirming. Frosted glass like the nav. */}
+          <div
+            role="radiogroup"
+            aria-label="How are you travelling?"
+            style={{
+              display: "flex",
+              gap: 4,
+              padding: 4,
+              borderRadius: 999,
+              background: "rgba(255,255,255,0.35)",
+              backdropFilter: "blur(18px)",
+              WebkitBackdropFilter: "blur(18px)",
+              border: "1px solid rgba(255,255,255,0.5)",
+              boxShadow: "0 8px 24px rgba(0,0,0,0.08)",
+              flexShrink: 0,
+            }}
+          >
+            {TRAVEL_OPTIONS.map((o) => {
+              const on = travel === o.key;
+              const Icon = o.key === "transit" ? TransitIcon : o.key === "car" ? CarIcon : CampervanIcon;
+              return (
+                <button
+                  key={o.key}
+                  role="radio"
+                  aria-checked={on}
+                  aria-label={o.label}
+                  title={o.label}
+                  onClick={() => selectTravel(o.key)}
+                  style={{
+                    flex: "1 1 0",
+                    height: 44,
+                    borderRadius: 999,
+                    border: "none",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                    cursor: "pointer",
+                    background: on ? "#111111" : "transparent",
+                    color: on ? "#FFFFFF" : "#111111",
+                    transition: "background 150ms, color 150ms",
+                  }}
+                >
+                  <Icon />
+                  <span style={{ fontSize: 12, fontWeight: 700 }}>{on ? o.label : ""}</span>
+                </button>
+              );
+            })}
+          </div>
           {/* The only thing that starts a search: the pin (from a search
               result, the device, or a tap on the map) is used once this is
               tapped. Hidden when the pin is already the plan's place. */}
@@ -1023,6 +1086,7 @@ export default function Home() {
               items={bookableCategories.map((cat) => [cat, findOption(cat, picks[cat])!])}
               area={location.name}
               place={location}
+              travel={travel}
               time={time}
               vibe={vibe}
             />

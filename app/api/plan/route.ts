@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TimeKey, VibeKey, BudgetKey } from "../../lib/constants";
-import { TIME_OPTIONS, VIBE_OPTIONS, BUDGET_OPTIONS } from "../../lib/constants";
+import { TIME_OPTIONS, VIBE_OPTIONS, BUDGET_OPTIONS, normalizeTravel, type TravelMode } from "../../lib/constants";
 import type { CategoryKey, CategoryOption, VenuePhoto } from "../../lib/categoryOptions";
 import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_STYLE } from "../../lib/categoryOptions";
 import { haversineKm } from "../../lib/geo";
@@ -69,7 +69,7 @@ import { findPartnerPages, partnerChecksSignature } from "../../lib/partnerCheck
 // Six AI calls in parallel plus Places; well under a minute, but allow slack.
 export const maxDuration = 300;
 
-type PlanRequest = { location: string; lat: number; lng: number; vibe: VibeKey };
+type PlanRequest = { location: string; lat: number; lng: number; vibe: VibeKey; travel: TravelMode };
 type CategoryResults = Partial<Record<CategoryKey, CategoryOption[]>>;
 type LiveOptions = Partial<Record<TimeKey, CategoryResults>>;
 const TIME_KEYS = TIME_OPTIONS.map((o) => o.key);
@@ -87,6 +87,13 @@ const MAX_DISTANCE_KM: Record<CategoryKey, number> = {
   parking: 3,
   stay: 8,
 };
+// By travel mode: campsites are usually out of town, and a car park that
+// takes a campervan may be further out than the nearest multi-storey.
+function maxDistanceKm(cat: CategoryKey, travel: TravelMode): number {
+  if (travel === "campervan" && cat === "stay") return 25;
+  if (travel === "campervan" && cat === "parking") return 6;
+  return MAX_DISTANCE_KM[cat];
+}
 
 // Which Claude model picks the venues for each category. Every category
 // except "live" chooses from its Google list (a simple job); "live" also
@@ -166,6 +173,10 @@ const CATEGORY_UNITS: Record<CategoryKey, string> = {
   live: "per person",
   parking: "per hour",
 };
+function unitFor(cat: CategoryKey, travel: TravelMode): string {
+  if (cat === "parking" && travel === "transit") return "typical fare";
+  return CATEGORY_UNITS[cat];
+}
 
 // ── Request parsing ─────────────────────────────────────────────────────
 
@@ -185,6 +196,7 @@ function parseRequest(body: unknown): PlanRequest | string {
     lat,
     lng,
     vibe: vibe as VibeKey,
+    travel: normalizeTravel((body as Record<string, unknown>).travel),
   };
 }
 
@@ -397,7 +409,7 @@ function localDate(lng: number): string {
 }
 
 function cacheKey(input: PlanRequest): string {
-  return `v5${partnerChecksSignature()}|${input.lat.toFixed(2)},${input.lng.toFixed(2)}|${input.vibe}|${localDate(input.lng)}`;
+  return `v6${partnerChecksSignature()}|${input.lat.toFixed(2)},${input.lng.toFixed(2)}|${input.vibe}|${input.travel}|${localDate(input.lng)}`;
 }
 
 function readMemoryCache(key: string): PlanData | null {
@@ -514,6 +526,8 @@ function trimTiers(list: CategoryOption[]): CategoryOption[] {
 }
 
 function nowFor(data: PlanData, cat: CategoryKey, nowMs: number): CategoryOption[] {
+  // Stays and the Travel category (car parks, stations, taxi ranks) are
+  // treated as always available rather than filtered by opening hours.
   const always = cat === "stay" || cat === "parking";
   return trimTiers((data.pool[cat] ?? []).filter((o) => always || isOpenAt(data.hours[o.id], nowMs)));
 }
@@ -746,6 +760,23 @@ Guidance:
 
 const LIVE_GUIDANCE = `This category is "live": live music, comedy, theatre or similar. Use web search to find what's actually on tonight and tomorrow at these venues (and any nearby ones the list missed). Favour venues with something on, list only the timeframes a show is on, and put the act or show in "highlight", with the day if it's only on one ("Tomorrow: jazz trio").`;
 
+// What the stay and Travel categories mean for how they're travelling.
+function travelGuidance(cat: CategoryKey, travel: TravelMode): string | null {
+  if (cat === "parking" && travel === "car") {
+    return `This category is "travel" for someone arriving by car: choose car parks near the pin.`;
+  }
+  if (cat === "parking" && travel === "transit") {
+    return `This category is "travel" for someone using public transport: choose the train stations, bus stations or stops, tram/underground stops and taxi ranks that are most useful for getting to and around this area. Favour stations with good services and taxi ranks near the centre. price_gbp is a typical single fare (a train or bus into the area, or a short taxi ride); 0 if you can't estimate it. Put the most useful fact in "highlight" (e.g. "Direct to London", "Taxis all night").`;
+  }
+  if (cat === "parking" && travel === "campervan") {
+    return `This category is "travel" for someone driving a campervan or motorhome (typically 2.6–3.2m tall, up to about 7m long). Choose only car parks a campervan can use: open-air car parks with no height barrier, ideally with large-vehicle, coach or motorhome bays. Never choose a multi-storey or underground car park unless you're confident it has bays for large vehicles. Put what makes it suitable in "highlight" (e.g. "No height barrier", "Motorhome bays"). price_gbp is per hour.`;
+  }
+  if (cat === "stay" && travel === "campervan") {
+    return `They're travelling by campervan or motorhome: strongly favour campsites, caravan parks and motorhome stopovers with pitches for campervans (price_gbp per night for a pitch). Only add hotels if there are too few campsites.`;
+  }
+  return null;
+}
+
 async function findCandidatesForCategory(
   cat: CategoryKey,
   input: PlanRequest,
@@ -763,7 +794,7 @@ async function findCandidatesForCategory(
     {
       role: "user",
       content:
-        `Category: ${cat} (${CATEGORY_LABELS[cat]}) — price_gbp is ${CATEGORY_UNITS[cat]}.\n` +
+        `Category: ${cat} (${CATEGORY_LABELS[cat]}) — price_gbp is ${unitFor(cat, input.travel)}.\n` +
         `Pin on the map: ${input.lat.toFixed(5)}, ${input.lng.toFixed(5)} — in ${input.location}.\n` +
         // The pin's time zone isn't known here, so give the exact UTC
         // instant and let the model work out local time for the location.
@@ -773,7 +804,8 @@ async function findCandidatesForCategory(
           ? `Near the pin, from Google Maps (closest first; ★rating (reviews); £–££££ price level):\n` +
             list.map((p) => `- ${describeNearby(p)}`).join("\n")
           : `Google Maps had nothing listed for this category near the pin${isLive ? "" : " — suggest only places you're confident exist within walking distance"}.`) +
-        (isLive ? `\n\n${LIVE_GUIDANCE}` : ""),
+        (isLive ? `\n\n${LIVE_GUIDANCE}` : "") +
+        (travelGuidance(cat, input.travel) ? `\n\n${travelGuidance(cat, input.travel)}` : ""),
     },
   ];
   const tools: Anthropic.Beta.BetaToolUnion[] = isLive
@@ -936,6 +968,18 @@ const CATEGORY_TYPE_CHECK: Partial<Record<CategoryKey, (types: string[]) => bool
   bar: (types) => types.some((t) => BAR_TYPES.includes(t) || t.endsWith("_bar")),
 };
 
+const TRANSIT_TYPES = ["train_station", "bus_station", "bus_stop", "subway_station", "light_rail_station", "transit_station", "taxi_stand", "taxi_service"];
+const CAMPSITE_TYPES = ["campground", "rv_park"];
+function typeCheckFor(cat: CategoryKey, travel: TravelMode): ((types: string[]) => boolean) | undefined {
+  if (cat === "parking" && travel === "transit") return (types) => types.some((t) => TRANSIT_TYPES.includes(t));
+  if (cat === "parking" && travel === "campervan") return (types) => types.some((t) => ["parking", "parking_lot", "rv_park"].includes(t));
+  if (cat === "stay" && travel === "campervan") {
+    const base = CATEGORY_TYPE_CHECK.stay!;
+    return (types) => types.some((t) => CAMPSITE_TYPES.includes(t)) || base(types);
+  }
+  return CATEGORY_TYPE_CHECK[cat];
+}
+
 async function lookupPlace(candidate: Candidate, input: PlanRequest, apiKey: string): Promise<Place | null> {
   const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
     method: "POST",
@@ -1014,6 +1058,35 @@ const NEARBY_QUERIES: Record<CategoryKey, NearbyQuery[]> = {
   parking: [{ types: ["parking"], rank: "DISTANCE", radiusKm: MAX_DISTANCE_KM.parking }],
 };
 
+function distanceFrom(input: PlanRequest, p: Place): number {
+  return p.location ? haversineKm({ lat: input.lat, lng: input.lng }, { lat: p.location.latitude, lng: p.location.longitude }) : Infinity;
+}
+
+// The nearby lists that depend on how they're travelling.
+function nearbyQueriesFor(cat: CategoryKey, travel: TravelMode): NearbyQuery[] {
+  if (cat === "parking" && travel === "transit") {
+    // Separately, so the many bus stops Google files as "bus_station"
+    // can't crowd out the train station (capped in listCategory).
+    return [
+      { types: ["train_station", "subway_station", "light_rail_station"], rank: "DISTANCE", radiusKm: 5 },
+      { types: ["bus_station"], rank: "DISTANCE", radiusKm: 1.5 },
+      { types: ["taxi_stand", "taxi_service"], rank: "DISTANCE", radiusKm: 3 },
+    ];
+  }
+  if (cat === "parking" && travel === "campervan") {
+    // No multi-storeys (Google marks some as parking_garage); motorhome
+    // parks count too.
+    return [{ types: ["parking", "rv_park"], excludePrimary: ["parking_garage"], rank: "DISTANCE", radiusKm: maxDistanceKm("parking", travel) }];
+  }
+  if (cat === "stay" && travel === "campervan") {
+    return [
+      { types: CAMPSITE_TYPES, excludePrimary: ["mobile_home_park"], rank: "DISTANCE", radiusKm: maxDistanceKm("stay", travel) },
+      ...NEARBY_QUERIES.stay,
+    ];
+  }
+  return NEARBY_QUERIES[cat];
+}
+
 // Fewer reviews than this usually means a stale or spam listing (for
 // stays, individual holiday lets). Car parks rarely get reviewed.
 const MIN_REVIEWS: Record<CategoryKey, number> = { stay: 3, restaurant: 5, bar: 5, attractions: 5, live: 3, parking: 0 };
@@ -1043,7 +1116,8 @@ async function nearbySearch(q: NearbyQuery, radiusKm: number, input: PlanRequest
 }
 
 async function listCategory(cat: CategoryKey, input: PlanRequest, apiKey: string, usage: SearchUsage): Promise<NearbyPlace[]> {
-  const queries = NEARBY_QUERIES[cat];
+  const queries = nearbyQueriesFor(cat, input.travel);
+  const maxKm = maxDistanceKm(cat, input.travel);
   const count = () => {
     usage.placesRequests++;
     usage.usd += USD_PER_PLACES_REQUEST;
@@ -1056,16 +1130,43 @@ async function listCategory(cat: CategoryKey, input: PlanRequest, apiKey: string
         p.location &&
         p.displayName?.text &&
         (!p.businessStatus || p.businessStatus === "OPERATIONAL") &&
-        (p.userRatingCount ?? 0) >= MIN_REVIEWS[cat]
+        (p.userRatingCount ?? 0) >= MIN_REVIEWS[cat] &&
+        // Campervans: never a known multi-storey.
+        !(cat === "parking" && input.travel === "campervan" && (p.types ?? []).includes("parking_garage"))
     );
   // Quiet area: widen once to the category's limit.
-  if (usable(places).length < THIN_LIST && queries[0].radiusKm < MAX_DISTANCE_KM[cat]) {
+  if (usable(places).length < THIN_LIST && queries[0].radiusKm < maxKm) {
     count();
-    places = places.concat(await nearbySearch(queries[0], MAX_DISTANCE_KM[cat], input, apiKey));
+    places = places.concat(await nearbySearch(queries[0], maxKm, input, apiKey));
   }
   const seenIds = new Set<string>();
   const seenNames = new Set<string>();
-  return usable(places)
+  let kept = usable(places);
+  if (cat === "parking" && input.travel === "campervan") {
+    // Names that say it can't take a campervan (Google's own multi-storey
+    // type misses many).
+    kept = kept.filter((p) => !/multi[- ]?stor|underground|motorcycle|motorbike/i.test(p.displayName!.text));
+  }
+  if (cat === "stay" && input.travel === "campervan") {
+    // Campsites first: with a few nearby, hotels are left out entirely.
+    // Residential parks and members-only sites aren't somewhere to stay.
+    kept = kept.filter((p) => !/residential|park homes|scout|naturis/i.test(p.displayName!.text));
+    const campsites = kept.filter((p) => (p.types ?? []).some((t) => CAMPSITE_TYPES.includes(t)));
+    if (campsites.length >= 3) kept = campsites;
+  }
+  if (cat === "parking" && input.travel === "transit") {
+    // Every station, but only the nearest bus stop and taxi firm/rank —
+    // each option list keeps its 4 nearest, so more would push the
+    // stations out.
+    const isTaxi = (p: Place) => (p.types ?? []).some((t) => t === "taxi_stand" || t === "taxi_service");
+    const isRail = (p: Place) => (p.types ?? []).some((t) => ["train_station", "subway_station", "light_rail_station"].includes(t));
+    const byDistance = (a: Place, b: Place) => distanceFrom(input, a) - distanceFrom(input, b);
+    const rail = kept.filter(isRail);
+    const taxis = kept.filter((p) => !isRail(p) && isTaxi(p)).sort(byDistance).slice(0, 1);
+    const buses = kept.filter((p) => !isRail(p) && !isTaxi(p)).sort(byDistance).slice(0, 1);
+    kept = [...rail, ...buses, ...taxis];
+  }
+  return kept
     .filter((p) => {
       const name = p.displayName!.text.trim().toLowerCase();
       if (seenIds.has(p.id) || seenNames.has(name)) return false;
@@ -1161,10 +1262,10 @@ async function verifyWithGooglePlaces(
     // Text Search always returns its closest match, even for a name that
     // doesn't exist — reject it unless the names actually share a word.
     if (!namesMatch(candidates[i].name, place.displayName.text)) return;
-    const typeCheck = CATEGORY_TYPE_CHECK[candidates[i].category];
+    const typeCheck = typeCheckFor(candidates[i].category, input.travel);
     if (typeCheck && !typeCheck(place.types ?? [])) return;
     const distanceKm = haversineKm({ lat: input.lat, lng: input.lng }, { lat: place.location.latitude, lng: place.location.longitude });
-    if (distanceKm > MAX_DISTANCE_KM[candidates[i].category]) return;
+    if (distanceKm > maxDistanceKm(candidates[i].category, input.travel)) return;
     verified.push({ candidate: candidates[i], place, distanceKm });
   });
   if (failures > 0) {
@@ -1226,7 +1327,7 @@ function assemble(verified: Verified[], input: PlanRequest): PlanData {
     const meta = [`${(distanceKm * 0.621371).toFixed(1)} mi`];
     if (typeof place.rating === "number") meta.push(`★ ${place.rating.toFixed(1)} Reviews`);
     if (candidate.highlight) meta.push(candidate.highlight);
-    if (cat === "parking") {
+    if (cat === "parking" && input.travel !== "transit") {
       const height = heightNote(place);
       if (height) meta.push(height);
     }
@@ -1238,7 +1339,7 @@ function assemble(verified: Verified[], input: PlanRequest): PlanData {
       price: candidate.priceLabel ?? formatPrice(candidate.price_gbp),
       // Prices are the AI's estimate, not a quote — say so. (Google's price
       // band in the draft needs no unit.)
-      unit: candidate.priceLabel || candidate.price_gbp === 0 || !isFinite(candidate.price_gbp) ? "" : `${CATEGORY_UNITS[cat]} (est.)`,
+      unit: candidate.priceLabel || candidate.price_gbp === 0 || !isFinite(candidate.price_gbp) ? "" : `${unitFor(cat, input.travel)} (est.)`,
       address: cleanAddress(place.shortFormattedAddress || place.formattedAddress || "", place.displayName!.text),
       phone: place.internationalPhoneNumber || "",
       // Every search is for one vibe, and only venues suiting it are chosen.

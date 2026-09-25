@@ -30,6 +30,7 @@ export function PlanSheetItems({
   time,
   vibe,
   place,
+  travel = "car",
 }: {
   items: [string, SheetItem][];
   area?: string;
@@ -37,11 +38,13 @@ export function PlanSheetItems({
   vibe?: string;
   // The plan's location, for "Getting there".
   place?: { lat?: number; lng?: number; name?: string };
+  // How they're travelling (transit / car / campervan).
+  travel?: string;
 }) {
   // Train, coach, car hire and parking from the travel partners that are
   // set up (nothing shows until one is).
-  const travel = items.length > 0 && place ? travelLinks(place) : [];
-  const tracked = travel.length > 0 || items.some(([cat, item]) => !item.hasApiBooking && partnerLink(cat, item, { time, vibe }));
+  const travelOptions = items.length > 0 && place ? travelLinks(place, travel) : [];
+  const tracked = travelOptions.length > 0 || items.some(([cat, item]) => !item.hasApiBooking && partnerLink(cat, item, { time, vibe }));
   return (
     <>
       {items.map(([cat, saved]) => {
@@ -63,9 +66,9 @@ export function PlanSheetItems({
               </a>
             )}
             <SaveInMapsLink venue={item} area={area} />
-            {cat === "parking" && (
+            {cat === "parking" && travel === "campervan" && (
               <span style={{ fontSize: 12, lineHeight: 1.45, color: "#767766" }}>
-                Campervan, van or large vehicle? Multi-storey car parks usually have a height barrier around 2m, so check the signs or the operator&rsquo;s site before you go.
+                Chosen for campervans: open-air car parks without height barriers where we can tell. Signs change, so check for height limits and large-vehicle bays before you go.
               </span>
             )}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -91,10 +94,10 @@ export function PlanSheetItems({
           </div>
         );
       })}
-      {travel.length > 0 && (
+      {travelOptions.length > 0 && (
         <div style={{ borderRadius: 20, background: "#F7F5EE", padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
           <span style={{ fontWeight: 600, fontSize: 18, color: "#111111" }}>Getting there</span>
-          {travel.map((t) => (
+          {travelOptions.map((t) => (
             <a
               key={t.detail}
               href={t.href}

@@ -56,6 +56,9 @@ export type SavedBooking = {
   // The search results behind the plan, so reopening it needs no new
   // search. Missing on older plans (they search again when opened).
   liveResults?: SavedLiveResults;
+  // How they're travelling (transit / car / campervan). Missing on plans
+  // saved before travel modes: those open as Car.
+  travel?: string;
 };
 export type BookingsSource = "account" | "device";
 
@@ -74,6 +77,7 @@ type BookingRow = {
   confirmed: boolean;
   location: PlanLocation | null;
   live_results?: SavedLiveResults | null;
+  travel?: string | null;
 };
 
 function fromRow(r: BookingRow): SavedBooking {
@@ -90,6 +94,7 @@ function fromRow(r: BookingRow): SavedBooking {
     confirmed: r.confirmed,
     location: r.location ?? undefined,
     liveResults: r.live_results ?? undefined,
+    travel: r.travel ?? undefined,
   };
 }
 
@@ -108,22 +113,25 @@ function toRow(b: SavedBooking) {
     confirmed: b.confirmed,
     location: b.location ?? null,
     live_results: b.liveResults ?? null,
+    travel: b.travel ?? null,
     updated_at: new Date().toISOString(),
   };
 }
 
-const BOOKING_COLUMNS = "id, created_at, plan_summary, picks, items, vibe, time_key, budget, removed_categories, confirmed, location";
-// Fetched separately-able: if schema.sql hasn't been re-run since this
-// column was added, everything else still works (see withoutLiveResults).
+const BOOKING_COLUMNS: string = "id, created_at, plan_summary, picks, items, vibe, time_key, budget, removed_categories, confirmed, location";
+// Columns added after the first schema: if schema.sql hasn't been re-run
+// since, everything else still works without them (see withoutNewColumns).
+const BOOKING_COLUMNS_WITH_TRAVEL = BOOKING_COLUMNS + ", travel";
 const BOOKING_COLUMNS_WITH_RESULTS = BOOKING_COLUMNS + ", live_results";
 
 // Postgres / PostgREST "column doesn't exist".
 function isMissingColumn(err: { code?: string } | null): boolean {
   return !!err && (err.code === "42703" || err.code === "PGRST204");
 }
-function withoutLiveResults<T extends { live_results?: unknown }>(row: T): Omit<T, "live_results"> {
-  const { live_results: _drop, ...rest } = row;
-  void _drop;
+function withoutNewColumns<T extends { live_results?: unknown; travel?: unknown }>(row: T): Omit<T, "live_results" | "travel"> {
+  const { live_results: _results, travel: _travel, ...rest } = row;
+  void _results;
+  void _travel;
   return rest;
 }
 
@@ -191,22 +199,21 @@ export async function listBookings(): Promise<{ bookings: SavedBooking[] | null;
 
   const importError = await importDeviceBookings(session.sb);
   // The list doesn't need the (large) search results.
-  const { data, error } = await session.sb
-    .from("bookings")
-    .select(BOOKING_COLUMNS)
-    .order("created_at", { ascending: false });
+  let { data, error } = await session.sb.from("bookings").select(BOOKING_COLUMNS_WITH_TRAVEL).order("created_at", { ascending: false });
+  if (isMissingColumn(error)) ({ data, error } = await session.sb.from("bookings").select(BOOKING_COLUMNS).order("created_at", { ascending: false }));
   if (error) {
     console.error("[Landed] couldn't load bookings", error);
     return { bookings: [], source: "account", error: describeError(error) };
   }
-  return { bookings: (data as BookingRow[]).map(fromRow), source: "account", error: importError };
+  return { bookings: (data as unknown as BookingRow[]).map(fromRow), source: "account", error: importError };
 }
 
 export async function getBooking(id: string): Promise<SavedBooking | null> {
   const session = await signedInClient();
   if (!session) return readDeviceBookings()?.find((b) => b.id === id) ?? null;
   if (!UUID_RE.test(id)) return null;
-  let { data, error } = await session.sb.from("bookings").select(BOOKING_COLUMNS_WITH_RESULTS).eq("id", id).maybeSingle();
+  let { data, error } = await session.sb.from("bookings").select(BOOKING_COLUMNS_WITH_RESULTS + ", travel").eq("id", id).maybeSingle();
+  if (isMissingColumn(error)) ({ data, error } = await session.sb.from("bookings").select(BOOKING_COLUMNS_WITH_RESULTS).eq("id", id).maybeSingle());
   if (isMissingColumn(error)) {
     ({ data, error } = await session.sb.from("bookings").select(BOOKING_COLUMNS).eq("id", id).maybeSingle());
   }
@@ -221,7 +228,7 @@ export async function saveBooking(booking: SavedBooking): Promise<{ savedTo: Boo
   if (session) {
     let { error } = await session.sb.from("bookings").upsert(toRow(booking));
     // schema.sql not re-run since live_results was added: save without it.
-    if (isMissingColumn(error)) ({ error } = await session.sb.from("bookings").upsert(withoutLiveResults(toRow(booking))));
+    if (isMissingColumn(error)) ({ error } = await session.sb.from("bookings").upsert(withoutNewColumns(toRow(booking))));
     if (!error) return { savedTo: "account" };
     console.error("[Landed] couldn't save booking to account — keeping it on this device", error);
     saveToDevice(booking);
@@ -271,7 +278,7 @@ async function importDeviceBookings(sb: SupabaseClient): Promise<string | undefi
     writeDeviceBookings(mine);
     const rows = mine.map((b) => ({ ...toRow(b), created_at: b.createdAt }));
     let { error } = await sb.from("bookings").upsert(rows);
-    if (isMissingColumn(error)) ({ error } = await sb.from("bookings").upsert(rows.map(withoutLiveResults)));
+    if (isMissingColumn(error)) ({ error } = await sb.from("bookings").upsert(rows.map(withoutNewColumns)));
     if (error) {
       console.error("[Landed] couldn't move this device's bookings into the account", error);
       return describeError(error);

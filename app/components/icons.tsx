@@ -45,3 +45,37 @@ export function PhotoIcon({ kind }: { kind: "exterior" | "interior" | "crowd" })
     </svg>
   );
 }
+
+// Travel mode icons for the toggle under the map (22px, stroke = currentColor).
+export function TransitIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="5" y="3" width="14" height="14" rx="3" />
+      <path d="M5 11h14" />
+      <circle cx="9" cy="14.2" r="0.6" fill="currentColor" />
+      <circle cx="15" cy="14.2" r="0.6" fill="currentColor" />
+      <path d="M8 21l2-4M16 21l-2-4" />
+    </svg>
+  );
+}
+export function CarIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M5 16V12l2-5h10l2 5v4" />
+      <path d="M3 16h18v2H3z" />
+      <path d="M5 12h14" />
+      <circle cx="7.5" cy="18.5" r="1.5" />
+      <circle cx="16.5" cy="18.5" r="1.5" />
+    </svg>
+  );
+}
+export function CampervanIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2 17V7a2 2 0 0 1 2-2h11l3 4h2a2 2 0 0 1 2 2v6H2z" />
+      <path d="M6 9h4v3H6zM14 9h3" />
+      <circle cx="6.5" cy="17.5" r="1.8" />
+      <circle cx="17" cy="17.5" r="1.8" />
+    </svg>
+  );
+}

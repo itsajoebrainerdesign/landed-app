@@ -6,6 +6,9 @@
 
 import type { VibeKey, BudgetKey } from "./constants";
 
+// "parking" is the Travel category (it was car parks only before travel
+// modes; the key stays so saved plans keep working): car parks, car parks
+// for large vehicles, or stations and taxis, by travel mode.
 export type CategoryKey = "stay" | "restaurant" | "attractions" | "bar" | "live" | "parking";
 
 // A Google Places photo: its resource name (served through /api/photo so
@@ -55,7 +58,7 @@ export const CATEGORY_LABELS: Record<CategoryKey, string> = {
   attractions: "Attractions",
   bar: "Nightlife",
   live: "Live",
-  parking: "Parking",
+  parking: "Travel",
 };
 
 // Each category's tag label and colour on the venue cards.
@@ -65,7 +68,7 @@ export const CATEGORY_STYLE: Record<CategoryKey, { tag: string; tagBg: string }>
   attractions: { tag: "ATTRACTIONS", tagBg: "#D6E8F5" },
   bar: { tag: "NIGHTLIFE", tagBg: "#F1F3C4" },
   live: { tag: "LIVE", tagBg: "#F6DCCB" },
-  parking: { tag: "PARKING", tagBg: "#DCEAE3" },
+  parking: { tag: "TRAVEL", tagBg: "#DCEAE3" },
 };
 
 // Picks the best venue for a category: rank everything by how close it is,

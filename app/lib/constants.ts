@@ -24,6 +24,21 @@ export const VIBE_OPTIONS: { key: VibeKey; label: string }[] = [
   { key: "family", label: "Family" },
   { key: "solo", label: "Solo" },
 ];
+// How they're getting there, chosen on the map before searching. It
+// decides what the Travel category finds (stations and taxis, car parks,
+// or car parks that take large vehicles) and, for campervans, favours
+// campsites as the stay.
+export type TravelMode = "transit" | "car" | "campervan";
+export const TRAVEL_OPTIONS: { key: TravelMode; label: string }[] = [
+  { key: "transit", label: "Public transport" },
+  { key: "car", label: "Car" },
+  { key: "campervan", label: "Campervan" },
+];
+export const DEFAULT_TRAVEL: TravelMode = "car";
+export function normalizeTravel(t: unknown): TravelMode {
+  return t === "transit" || t === "campervan" ? t : DEFAULT_TRAVEL;
+}
+
 export const BUDGET_OPTIONS: { key: BudgetKey; label: string }[] = [
   { key: "modest", label: "Modest" },
   { key: "luxury", label: "Luxury" },

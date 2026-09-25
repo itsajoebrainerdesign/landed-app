@@ -102,6 +102,10 @@ create policy "Plan searches are insertable by their owner"
 -- without searching again. Null on older plans.
 alter table public.bookings add column if not exists live_results jsonb;
 
+-- How they're travelling: 'transit', 'car' or 'campervan'. Null on older
+-- plans (they open as car).
+alter table public.bookings add column if not exists travel text;
+
 -- ── Plan cache: shared live-search results ────────────────────────────
 -- Finished /api/plan searches, per area (~1 km), vibe and local date, so
 -- the next search of that area is instant for everyone. Written and read
