@@ -366,7 +366,9 @@ export default function Bookings() {
       {removed && (
         <div
           role="status"
-          style={{ position: "fixed", left: 21, right: 21, bottom: 96, zIndex: 40, borderRadius: 999, background: "#111111", color: "#FFFFFF", padding: "10px 10px 10px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 13 }}
+          // Clears the nav bar (NavBar.tsx: 20px + safe area below a ~76px
+          // pill) and sits above it, so it's never hidden behind it.
+          style={{ position: "fixed", left: 21, right: 21, bottom: "calc(env(safe-area-inset-bottom, 0px) + 112px)", zIndex: 101, borderRadius: 999, background: "#111111", color: "#FFFFFF", padding: "10px 10px 10px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 13 }}
         >
           <span>{removed.confirmed ? "Booking" : "Draft"} removed</span>
           <button onClick={undoRemove} style={{ borderRadius: 999, padding: "6px 14px", fontSize: 12, fontWeight: 700, border: "none", background: "#DEEB3A", color: "#111111", cursor: "pointer" }}>
