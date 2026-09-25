@@ -12,6 +12,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "./supabase/client";
 import type { PlanLocation } from "./geo";
+import type { CategoryOption } from "./categoryOptions";
+
+// The live search results a plan was built from: per timeframe ("now",
+// "tonight", "tomorrow"), per category.
+export type SavedLiveResults = Record<string, Record<string, CategoryOption[]>>;
 
 // The venue as it was when saved. Newer saves store the full option (id,
 // address, phone, vibes, meta) so a live venue reloads exactly even after
@@ -44,6 +49,9 @@ export type SavedBooking = {
   // Where the plan is. Missing on plans saved before the map search could
   // move the plan — those are Galway.
   location?: PlanLocation;
+  // The search results behind the plan, so reopening it needs no new
+  // search. Missing on older plans (they search again when opened).
+  liveResults?: SavedLiveResults;
 };
 export type BookingsSource = "account" | "device";
 
@@ -61,6 +69,7 @@ type BookingRow = {
   removed_categories: string[];
   confirmed: boolean;
   location: PlanLocation | null;
+  live_results?: SavedLiveResults | null;
 };
 
 function fromRow(r: BookingRow): SavedBooking {
@@ -76,6 +85,7 @@ function fromRow(r: BookingRow): SavedBooking {
     removedCategories: r.removed_categories || [],
     confirmed: r.confirmed,
     location: r.location ?? undefined,
+    liveResults: r.live_results ?? undefined,
   };
 }
 
@@ -93,11 +103,25 @@ function toRow(b: SavedBooking) {
     removed_categories: b.removedCategories,
     confirmed: b.confirmed,
     location: b.location ?? null,
+    live_results: b.liveResults ?? null,
     updated_at: new Date().toISOString(),
   };
 }
 
 const BOOKING_COLUMNS = "id, created_at, plan_summary, picks, items, vibe, time_key, budget, removed_categories, confirmed, location";
+// Fetched separately-able: if schema.sql hasn't been re-run since this
+// column was added, everything else still works (see withoutLiveResults).
+const BOOKING_COLUMNS_WITH_RESULTS = BOOKING_COLUMNS + ", live_results";
+
+// Postgres / PostgREST "column doesn't exist".
+function isMissingColumn(err: { code?: string } | null): boolean {
+  return !!err && (err.code === "42703" || err.code === "PGRST204");
+}
+function withoutLiveResults<T extends { live_results?: unknown }>(row: T): Omit<T, "live_results"> {
+  const { live_results: _drop, ...rest } = row;
+  void _drop;
+  return rest;
+}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function newBookingId(): string {
@@ -157,6 +181,7 @@ export async function listBookings(): Promise<{ bookings: SavedBooking[] | null;
   if (!session) return { bookings: readDeviceBookings(), source: "device" };
 
   const importError = await importDeviceBookings(session.sb);
+  // The list doesn't need the (large) search results.
   const { data, error } = await session.sb
     .from("bookings")
     .select(BOOKING_COLUMNS)
@@ -172,13 +197,12 @@ export async function getBooking(id: string): Promise<SavedBooking | null> {
   const session = await signedInClient();
   if (!session) return readDeviceBookings()?.find((b) => b.id === id) ?? null;
   if (!UUID_RE.test(id)) return null;
-  const { data, error } = await session.sb
-    .from("bookings")
-    .select(BOOKING_COLUMNS)
-    .eq("id", id)
-    .maybeSingle();
+  let { data, error } = await session.sb.from("bookings").select(BOOKING_COLUMNS_WITH_RESULTS).eq("id", id).maybeSingle();
+  if (isMissingColumn(error)) {
+    ({ data, error } = await session.sb.from("bookings").select(BOOKING_COLUMNS).eq("id", id).maybeSingle());
+  }
   if (error) console.error("[Landed] couldn't load booking", error);
-  return data ? fromRow(data as BookingRow) : null;
+  return data ? fromRow(data as unknown as BookingRow) : null;
 }
 
 // Inserts or updates by id. If the account save fails, the plan is kept on
@@ -186,7 +210,9 @@ export async function getBooking(id: string): Promise<SavedBooking | null> {
 export async function saveBooking(booking: SavedBooking): Promise<{ savedTo: BookingsSource; error?: string }> {
   const session = await signedInClient();
   if (session) {
-    const { error } = await session.sb.from("bookings").upsert(toRow(booking));
+    let { error } = await session.sb.from("bookings").upsert(toRow(booking));
+    // schema.sql not re-run since live_results was added: save without it.
+    if (isMissingColumn(error)) ({ error } = await session.sb.from("bookings").upsert(withoutLiveResults(toRow(booking))));
     if (!error) return { savedTo: "account" };
     console.error("[Landed] couldn't save booking to account — keeping it on this device", error);
     saveToDevice(booking);
@@ -220,7 +246,8 @@ async function importDeviceBookings(sb: SupabaseClient): Promise<string | undefi
   if (mine.length > 0) {
     writeDeviceBookings(mine);
     const rows = mine.map((b) => ({ ...toRow(b), created_at: b.createdAt }));
-    const { error } = await sb.from("bookings").upsert(rows);
+    let { error } = await sb.from("bookings").upsert(rows);
+    if (isMissingColumn(error)) ({ error } = await sb.from("bookings").upsert(rows.map(withoutLiveResults)));
     if (error) {
       console.error("[Landed] couldn't move this device's bookings into the account", error);
       return describeError(error);

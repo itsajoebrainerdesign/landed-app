@@ -75,8 +75,12 @@ const MAX_DISTANCE_KM: Record<CategoryKey, number> = {
 };
 
 const MODEL = "claude-opus-5";
-// Up to this many per category across all three timeframes combined.
-const CANDIDATES_PER_CATEGORY = 7;
+// Up to this many per category across all three timeframes combined
+// (each one costs a Google Places lookup)…
+const CANDIDATES_PER_CATEGORY = 5;
+// …and at most this many kept per category per timeframe: the plan's pick
+// plus 3 swaps.
+const OPTIONS_PER_CATEGORY = 4;
 const CACHE_TTL_MS = 30 * 60 * 1000;
 const CACHE_MAX_ENTRIES = 500;
 
@@ -377,7 +381,7 @@ Guidance:
   - Only if a category has nothing good that close, widen to 3 km. Never suggest anything further than ${MAX_DISTANCE_KM.restaurant} km for restaurants, bars and parking, ${MAX_DISTANCE_KM.live} km for live and attractions, or ${MAX_DISTANCE_KM.stay} km for stays — anything beyond is discarded.
   - Among good options, closer is better.
 - Include a spread of price points (budget through premium) in every category where the area has them, so the user's budget setting has real choices.
-- "times" lists every timeframe a venue suits. Most places suit several; pick venues so that each timeframe ends up with a few good options per category where the area has them (e.g. a daytime café for now, a late bar for tonight).
+- "times" lists every timeframe a venue suits. Most places suit several; pick venues so that each timeframe ends up with about ${OPTIONS_PER_CATEGORY} good options per category where the area has them (the plan's pick plus 3 alternatives) — e.g. a daytime café for now, a late bar for tonight.
 - "live" means live music, comedy, theatre, or similar. Favour venues with something actually on in a timeframe, and only list the timeframes the show is on. Put the act or show in "highlight", with the day if it's only on one ("Tomorrow: jazz trio").
 - Only include places that are currently operating. Skip anything permanently closed.
 - "name" must be the venue's business name exactly as Google Maps would list it, since each one is verified against Google Places.
@@ -673,9 +677,13 @@ function rankAndAssemble(verified: Verified[], input: PlanRequest): LiveOptions 
       ((options[time] ??= {})[cat] ??= []).push(option);
     }
   }
-  // Closest first, matching how the static catalog reads in the swap sheet.
+  // Closest first (matching how the static catalog reads in the swap
+  // sheet), keeping the nearest OPTIONS_PER_CATEGORY.
   for (const byCat of Object.values(options)) {
-    for (const list of Object.values(byCat ?? {})) list?.sort((a, b) => parseFloat(a.meta[0]) - parseFloat(b.meta[0]));
+    if (!byCat) continue;
+    for (const cat of Object.keys(byCat) as CategoryKey[]) {
+      byCat[cat] = byCat[cat]!.sort((a, b) => parseFloat(a.meta[0]) - parseFloat(b.meta[0])).slice(0, OPTIONS_PER_CATEGORY);
+    }
   }
   return options;
 }

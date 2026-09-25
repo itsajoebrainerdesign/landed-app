@@ -135,7 +135,9 @@ export function LiveMap({
   className?: string;
   style?: React.CSSProperties;
   location?: PlanLocation;
-  onPlaceSelect?: (place: PlanLocation) => void;
+  // `source`: a search result, the "Use my location" button, or the
+  // automatic location on opening.
+  onPlaceSelect?: (place: PlanLocation, source: "search" | "device-button" | "device-auto") => void;
   // Changing this clears the search box and marker and goes back to the
   // device's location (used when + starts a new enquiry).
   resetSignal?: number;
@@ -258,7 +260,7 @@ export function LiveMap({
             marker.map = place.location ? map : null;
             if (place.location) {
               const point = { lat: place.location.lat(), lng: place.location.lng() };
-              onPlaceSelectRef.current?.(describePlace(point, place.addressComponents, place.displayName || ""));
+              onPlaceSelectRef.current?.(describePlace(point, place.addressComponents, place.displayName || ""), "search");
             }
           } catch (err) {
             console.warn("[Landed] couldn't load the selected place", err);
@@ -268,7 +270,7 @@ export function LiveMap({
         // Centre on the device, and name the spot from the nearest place's
         // address (reverse geocoding would need the separate Geocoding
         // API; this uses Places, which the key already has).
-        const centreOnDevice = async (point: LatLng) => {
+        const centreOnDevice = async (point: LatLng, source: "device-button" | "device-auto") => {
           map.setCenter(point);
           map.setZoom(14);
           marker.position = point;
@@ -286,7 +288,7 @@ export function LiveMap({
           } catch (err) {
             console.warn("[Landed] couldn't name the current location", err);
           }
-          if (!cancelled) onPlaceSelectRef.current?.(described);
+          if (!cancelled) onPlaceSelectRef.current?.(described, source);
         };
 
         // Apply the device location unless a place was already chosen
@@ -294,7 +296,7 @@ export function LiveMap({
         const applyDeviceLocation = async () => {
           const point = await deviceLocation;
           if (cancelled || !point || locationRef.current) return;
-          await centreOnDevice(point);
+          await centreOnDevice(point, "device-auto");
         };
 
         mountAutocomplete();
@@ -304,7 +306,7 @@ export function LiveMap({
         locateRef.current = async () => {
           const point = await getDeviceLocation();
           if (cancelled || !point) return false;
-          await centreOnDevice(point);
+          await centreOnDevice(point, "device-button");
           return true;
         };
         setMapReady(true);

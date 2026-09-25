@@ -96,3 +96,8 @@ create policy "Plan searches are readable by their owner"
 drop policy if exists "Plan searches are insertable by their owner" on public.plan_searches;
 create policy "Plan searches are insertable by their owner"
   on public.plan_searches for insert with check (auth.uid() = user_id);
+
+-- The live search results a plan was built from (Now / Tonight / Tomorrow,
+-- per category), so reopening a draft restores its swaps and timeframes
+-- without searching again. Null on older plans.
+alter table public.bookings add column if not exists live_results jsonb;

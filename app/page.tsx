@@ -17,7 +17,7 @@ import { SectionHeading } from "./components/SectionHeading";
 import { LiveMap } from "./components/LiveMap";
 import { LoadingBar } from "./components/LoadingBar";
 import { getBooking, saveBooking, newBookingId } from "./lib/bookingsStore";
-import type { SavedItem } from "./lib/bookingsStore";
+import type { SavedItem, SavedLiveResults } from "./lib/bookingsStore";
 import type { PlanLocation } from "./lib/geo";
 import { DEFAULT_LOCATION, isNearGalway } from "./lib/geo";
 
@@ -156,17 +156,32 @@ export default function Home() {
   // re-picks everything anyway, so it resets this.
   const manualPicksRef = useRef(false);
 
+  // Whether the person has actually done something with this enquiry —
+  // searched a place, used "Use my location", changed When/Vibe/Budget,
+  // swapped or removed a venue, or opened a saved plan. Only then is the
+  // plan auto-saved as a draft, so simply opening the app (which finds
+  // your location on its own) doesn't leave a draft behind every time.
+  const engagedRef = useRef(false);
+
+  // Live results already fetched this visit, by place (~100 m) and vibe,
+  // so going back to a place/vibe — or opening a saved plan that carries
+  // its results — never searches again.
+  const resultsCacheRef = useRef(new Map<string, LiveResults>());
+  const resultsKey = (p: { lat: number; lng: number }, v: VibeKey) => `${p.lat.toFixed(3)},${p.lng.toFixed(3)}|${v}`;
+
   // Vibe and Budget re-run the closest-match-preferring-vibe pick for every
   // category, so Your Plan actually reflects the answer — this replaces any
   // manual swaps with the new best fit. Done here in the handlers rather
   // than in an effect on [vibe, budget], because an effect also fired when
   // a saved plan set vibe/budget, and overwrote its picks.
   function selectVibe(next: VibeKey) {
+    engagedRef.current = true;
     setVibe(next);
     manualPicksRef.current = false;
     setPicks(computePicks(next, budget, catalog));
   }
   function selectBudget(next: BudgetKey) {
+    engagedRef.current = true;
     setBudget(next);
     manualPicksRef.current = false;
     setPicks(computePicks(vibe, next, catalog));
@@ -174,6 +189,7 @@ export default function Home() {
   // When switches to that timeframe's results, which are already here
   // from the same search — no new request.
   function selectTime(next: TimeKey) {
+    engagedRef.current = true;
     setTime(next);
     manualPicksRef.current = false;
     setPicks(computePicks(vibe, budget, mergeCatalog(liveOptions?.[next] ?? null, staticFallback)));
@@ -181,7 +197,10 @@ export default function Home() {
   // The map's search box moved the plan. The previous live results were
   // for the old place, so drop them; near Galway the static catalog shows
   // meanwhile, elsewhere the plan waits for live results.
-  function selectLocation(next: PlanLocation) {
+  // `source` says how: a search or the "Use my location" button count as
+  // the person engaging; the automatic location on opening doesn't.
+  function selectLocation(next: PlanLocation, source: "search" | "device-button" | "device-auto" = "search") {
+    if (source !== "device-auto") engagedRef.current = true;
     setLocationChosen(true);
     setLocation(next);
     setLiveOptions(null);
@@ -203,8 +222,20 @@ export default function Home() {
     // Nothing is shown until a location is chosen, so don't spend a live
     // search (or the user's allowance) on the default before then.
     if (!locationChosen) return;
-    const controller = new AbortController();
     const useStatic = isNearGalway(location);
+    const cacheKey = resultsKey(location, vibe);
+    const cached = resultsCacheRef.current.get(cacheKey);
+    if (cached) {
+      // Already have results for this place and vibe — no new search.
+      setLiveStatus(null);
+      setLiveLoading(false);
+      setLiveOptions(cached);
+      if (!manualPicksRef.current) {
+        setPicks(computePicks(vibe, budgetRef.current, mergeCatalog(cached[timeRef.current] ?? null, useStatic)));
+      }
+      return;
+    }
+    const controller = new AbortController();
     setLiveStatus(null);
     setLiveLoading(true);
     setSearchCount((n) => n + 1);
@@ -222,6 +253,7 @@ export default function Home() {
           Object.values(live).forEach((byCat) =>
             Object.values(byCat ?? {}).forEach((opts) => opts?.forEach((o) => knownOptionsRef.current.set(o.id, o)))
           );
+          resultsCacheRef.current.set(cacheKey, live);
         }
         setLiveLoading(false);
         setLiveOptions(live);
@@ -406,6 +438,16 @@ export default function Home() {
       .then((found) => {
         if (!found) return;
         draftIdRef.current = found.id;
+        engagedRef.current = true;
+        // The plan's own search results come with it, so reopening it
+        // restores its swaps and timeframes without searching again.
+        if (found.liveResults && found.location) {
+          const restored = found.liveResults as LiveResults;
+          Object.values(restored).forEach((byCat) =>
+            Object.values(byCat ?? {}).forEach((opts) => opts?.forEach((o) => knownOptionsRef.current.set(o.id, o)))
+          );
+          resultsCacheRef.current.set(resultsKey(found.location, found.vibe as VibeKey), restored);
+        }
         setLocationChosen(true);
         manualPicksRef.current = true;
         rememberSavedItems(found.items);
@@ -425,6 +467,39 @@ export default function Home() {
       });
   }, []);
 
+  // Saves the plan on screen — to the account when signed in, this device
+  // when not (and to this device as a fallback if the account save fails).
+  // The same entry every time for this enquiry (draftIdRef), so repeated
+  // saves update it. Stores the full venues and the search results, so
+  // reopening it restores it exactly without searching again.
+  function savePlan(overrides: { confirmed?: boolean } = {}) {
+    const items: Record<string, SavedItem> = {};
+    CATEGORY_ORDER.forEach((cat) => {
+      if (removedCategories.includes(cat)) return;
+      const opt = findOption(cat, picks[cat]);
+      if (opt) items[cat] = { ...opt, hasApiBooking: opt.hasApiBooking || false };
+    });
+    if (!draftIdRef.current) draftIdRef.current = newBookingId();
+    saveBooking({
+      id: draftIdRef.current,
+      createdAt: new Date().toISOString(),
+      planSummary,
+      picks,
+      items,
+      vibe,
+      time,
+      budget,
+      removedCategories,
+      confirmed: overrides.confirmed ?? bookingsConfirmed,
+      location,
+      liveResults: (liveOptions ?? undefined) as SavedLiveResults | undefined,
+    })
+      .then(({ error }) => {
+        if (error) console.warn("[Landed] plan saved on this device instead of your account:", error);
+      })
+      .catch((err) => console.error("[Landed] couldn't save plan", err));
+  }
+
   // Handles the nav bar's "+" button when already on this page: saves
   // whatever's currently on screen (updating the loaded draft in place if
   // we're editing one, otherwise adding a new entry), then resets
@@ -434,42 +509,8 @@ export default function Home() {
     function handleNewBooking() {
       // Only save a plan that has something in it — before a location is
       // chosen (or where nothing was found) there's nothing to keep.
-      if (locationChosen && visibleCategories.length > 0) saveCurrentPlan();
+      if (locationChosen && visibleCategories.length > 0) savePlan();
       startNewEnquiry();
-    }
-
-    function saveCurrentPlan() {
-      // The full venue is stored, not just what the Bookings page shows,
-      // so a live venue reloads exactly in a later session.
-      const items: Record<string, SavedItem> = {};
-      CATEGORY_ORDER.forEach((cat) => {
-        if (removedCategories.includes(cat)) return;
-        const opt = findOption(cat, picks[cat]);
-        if (opt) {
-          items[cat] = { ...opt, hasApiBooking: opt.hasApiBooking || false };
-        }
-      });
-      const draft = {
-        id: draftIdRef.current || newBookingId(),
-        createdAt: new Date().toISOString(),
-        planSummary,
-        picks,
-        items,
-        vibe,
-        time,
-        budget,
-        removedCategories,
-        confirmed: bookingsConfirmed,
-        location,
-      };
-      // To the account when signed in, this device when not (and to this
-      // device as a fallback if the account save fails). Fire-and-forget:
-      // the screen resets straight away so + always feels instant.
-      saveBooking(draft)
-        .then(({ error }) => {
-          if (error) console.warn("[Landed] plan saved on this device instead of your account:", error);
-        })
-        .catch((err) => console.error("[Landed] couldn't save plan", err));
     }
 
     // A brand-new enquiry: everything back to the defaults, including the
@@ -477,6 +518,7 @@ export default function Home() {
     // (the lock effect scrolls back to the top).
     function startNewEnquiry() {
       draftIdRef.current = null;
+      engagedRef.current = false;
       setVibe("nightout");
       setTime("now");
       setBudget("low");
@@ -498,7 +540,18 @@ export default function Home() {
     window.addEventListener("landed:new-booking", handleNewBooking);
     return () => window.removeEventListener("landed:new-booking", handleNewBooking);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [planSummary, picks, vibe, time, budget, removedCategories, bookingsConfirmed, catalog, location, locationChosen, visibleCategories]);
+  }, [planSummary, picks, vibe, time, budget, removedCategories, bookingsConfirmed, catalog, location, locationChosen, visibleCategories, liveOptions]);
+
+  // Auto-save: once the person has done something with a plan that has
+  // venues in it, keep it saved as a draft (or as their confirmed booking,
+  // once confirmed) — debounced, and always the same entry for this
+  // enquiry, so tweaking it updates the draft rather than adding more.
+  useEffect(() => {
+    if (!engagedRef.current || !locationChosen || liveLoading || visibleCategories.length === 0) return;
+    const t = window.setTimeout(() => savePlan(), 1200);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [picks, vibe, time, budget, removedCategories, location, liveOptions, bookingsConfirmed, liveLoading, locationChosen]);
 
   function handleBookPlan() {
     setBookingOpen(true);
@@ -666,7 +719,10 @@ export default function Home() {
                   area={location.name}
                   actionLabel="SWAP"
                   onAction={() => setOpenSwap(cat)}
-                  onRemove={() => setRemovedCategories((r) => [...r, cat])}
+                  onRemove={() => {
+                    engagedRef.current = true;
+                    setRemovedCategories((r) => [...r, cat]);
+                  }}
                 />
               );
             })}
@@ -689,6 +745,7 @@ export default function Home() {
                       <button
                         key={cat}
                         onClick={() => {
+                          engagedRef.current = true;
                           setRemovedCategories((r) => r.filter((c) => c !== cat));
                           setShowAddMenu(false);
                         }}
@@ -833,7 +890,8 @@ export default function Home() {
             {openSwap &&
               catalog[openSwap]
                 .filter((o) => o.id !== picks[openSwap])
-                .slice(0, 5)
+                // The plan's pick plus up to 3 swaps.
+                .slice(0, 3)
                 .map((alt) => (
                   <div key={alt.id} style={{ borderRadius: 20, background: "#F7F5EE", padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
                     <span style={{ alignSelf: "flex-start", borderRadius: 999, padding: "6px 14px", fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", background: alt.tagBg, color: "#111111" }}>
@@ -868,6 +926,7 @@ export default function Home() {
                       <button
                         onClick={() => {
                           manualPicksRef.current = true;
+                          engagedRef.current = true;
                           setPicks((p) => ({ ...p, [openSwap]: alt.id }));
                           setOpenSwap(null);
                         }}
@@ -1102,6 +1161,10 @@ export default function Home() {
             <button
               onClick={() => {
                 setConfirming(true);
+                // Saved straight away as a confirmed booking (it appears
+                // under "Your bookings"), updating this enquiry's draft.
+                engagedRef.current = true;
+                savePlan({ confirmed: true });
                 window.setTimeout(() => {
                   setConfirming(false);
                   setBookingsConfirmed(true);
