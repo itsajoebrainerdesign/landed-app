@@ -142,7 +142,13 @@ export function newBookingId(): string {
 export function readDeviceBookings(): SavedBooking[] | null {
   try {
     const raw = localStorage.getItem(LOCAL_KEY);
-    return raw ? (JSON.parse(raw) as SavedBooking[]) : null;
+    if (!raw) return null;
+    const list = JSON.parse(raw) as SavedBooking[];
+    // Older versions seeded placeholder example plans ("example-…") on this
+    // device; they aren't the person's, so drop them for good.
+    const own = list.filter((b) => !b.id.startsWith("example-"));
+    if (own.length !== list.length) writeDeviceBookings(own);
+    return own;
   } catch {
     return null;
   }
