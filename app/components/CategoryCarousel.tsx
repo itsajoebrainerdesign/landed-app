@@ -10,15 +10,16 @@ import type { CategoryOption } from "../lib/categoryOptions";
 // side peek in at the edges, faded, to show there's more. Whichever card
 // is centred is the plan's pick; dots underneath show where you are.
 //
-// It loops: the options are laid out three times over, and once a swipe
-// settles in the first or last copy it jumps (invisibly) to the same card
-// in the middle copy, so there's always more to swipe in both directions.
+// It loops endlessly: the options are laid out many times over, and each
+// time a swipe settles it jumps (invisibly — the cards are identical) to
+// the same card in the middle copy. With 4 copies either side, even a
+// run of quick swipes never reaches the end before it recentres.
 
 // How far each card sits in from the screen edge; with the gap, this is
 // how much of the neighbouring cards shows (INSET - GAP).
 const INSET = 34;
 const GAP = 12;
-const COPIES = 3;
+const COPIES = 9; // odd, so there is a middle copy
 
 export function CategoryCarousel({
   options,
@@ -40,7 +41,9 @@ export function CategoryCarousel({
   const selectedIndex = Math.max(0, options.findIndex((o) => o.id === selectedId));
   // The strip: the options three times over when looping.
   const strip = loops ? Array.from({ length: COPIES }, () => options).flat() : options;
-  const home = (index: number) => (loops ? count + index : index); // position in the middle copy
+  const MIDDLE = Math.floor(COPIES / 2);
+  const home = (index: number) => (loops ? MIDDLE * count + index : index); // position in the middle copy
+  const inMiddle = (position: number) => position >= MIDDLE * count && position < (MIDDLE + 1) * count;
 
   // The card nearest the centre right now (updates while swiping, for the
   // fading and the dots).
@@ -98,7 +101,7 @@ export function CategoryCarousel({
     settleTimer.current = window.setTimeout(() => {
       const position = Math.round(el.scrollLeft / step(el));
       const index = ((position % count) + count) % count;
-      if (loops && (position < count || position >= 2 * count)) jumpTo(home(index));
+      if (loops && !inMiddle(position)) jumpTo(home(index));
       const option = options[index];
       if (option && option.id !== selectedId) onSelect(option.id);
     }, 150);
@@ -139,7 +142,7 @@ export function CategoryCarousel({
             }}
             // The copies are only there for looping — keep them out of the
             // accessibility tree.
-            aria-hidden={loops && (position < count || position >= 2 * count) ? true : undefined}
+            aria-hidden={loops && !inMiddle(position) ? true : undefined}
           >
             <PlanItemCard item={option} area={area} onRemove={onRemove} />
           </div>
