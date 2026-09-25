@@ -64,12 +64,13 @@ function localDay(offsetDays: number): string {
 // 1 room, and the party size for the vibe (partyFor) — the person can
 // change any of it on Booking.com.
 //
-// Booking.com's free-text search often doesn't recognise a hotel's name
-// (it falls back to its homepage), so a stay with a map position opens
-// the results centred on it, closest first — the hotel is at or near the
-// top when Booking.com sells it (Travelodge and Premier Inn don't; then
-// it's the nearest alternatives). Without a position (older saved plans),
-// it searches the area by name.
+// Booking.com's free-text search doesn't recognise hotel names (it falls
+// back to its homepage), so a stay with a map position opens the results
+// centred on it, closest first — the hotel is at or near the top when
+// Booking.com sells it (Travelodge and Premier Inn don't; then it's the
+// nearest alternatives). Older saved plans don't have the stay's
+// position: those centre on the plan's own location (areaPos), or search
+// the town by name, which Booking.com does understand.
 // Who's going, by vibe: Family is 2 adults + 1 child, Solo is 1, and
 // Date and Friends are 2 (a friends group varies — 2 is the default the
 // person adjusts on the booking site).
@@ -84,18 +85,22 @@ export function stayBookingUrl(
   stay: { title: string; lat?: number; lng?: number },
   area?: string,
   time: string = "tonight",
-  vibe?: string
+  vibe?: string,
+  areaPos?: { lat?: number; lng?: number }
 ) {
   const checkinOffset = time === "tomorrow" ? 1 : 0;
   const params = new URLSearchParams();
-  if (typeof stay.lat === "number" && typeof stay.lng === "number") {
-    params.set("ss", stay.title);
-    params.set("latitude", stay.lat.toFixed(6));
-    params.set("longitude", stay.lng.toFixed(6));
+  const hasPos = (p?: { lat?: number; lng?: number }): p is { lat: number; lng: number } =>
+    typeof p?.lat === "number" && typeof p?.lng === "number" && !(p.lat === 0 && p.lng === 0);
+  const pos = hasPos(stay) ? stay : hasPos(areaPos) ? areaPos : null;
+  if (pos) {
+    params.set("ss", pos === stay ? stay.title : area || stay.title);
+    params.set("latitude", pos.lat.toFixed(6));
+    params.set("longitude", pos.lng.toFixed(6));
     params.set("dest_type", "latlong");
     params.set("order", "distance_from_search");
   } else {
-    params.set("ss", area ? `${stay.title}, ${area}` : stay.title);
+    params.set("ss", area || stay.title);
   }
   params.set("checkin", localDay(checkinOffset));
   params.set("checkout", localDay(checkinOffset + 1));
@@ -121,9 +126,10 @@ export function planItemLink(
   item: { title: string; lat?: number; lng?: number; website?: string },
   area?: string,
   time?: string,
-  vibe?: string
+  vibe?: string,
+  areaPos?: { lat?: number; lng?: number }
 ): { href: string; label: string } {
-  if (cat === "stay") return { href: stayBookingUrl(item, area, time, vibe), label: "Book ↗" };
+  if (cat === "stay") return { href: stayBookingUrl(item, area, time, vibe, areaPos), label: "Book ↗" };
   if (cat === "attractions" || cat === "live") return { href: ticketSearchUrl(item.title, area, item.website), label: "Get Tickets ↗" };
   if (cat === "parking") return { href: mapsUrl(item.title, area), label: "Get Directions ↗" };
   return { href: bookingSearchUrl(item.title, area, item.website), label: "Book ↗" };

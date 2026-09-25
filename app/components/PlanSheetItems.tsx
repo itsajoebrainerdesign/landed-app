@@ -25,16 +25,20 @@ export function PlanSheetItems({
   area,
   time,
   vibe,
+  areaPos,
 }: {
   items: [string, SheetItem][];
   area?: string;
+  // The plan's location — where a stay link centres when the stay itself
+  // has no saved position (older plans).
+  areaPos?: { lat?: number; lng?: number };
   time?: string;
   vibe?: string;
 }) {
   return (
     <>
       {items.map(([cat, item]) => {
-        const link = planItemLink(cat, item, area, time, vibe);
+        const link = planItemLink(cat, item, area, time, vibe, areaPos);
         return (
           <div key={cat} style={{ borderRadius: 20, background: "#F7F5EE", padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
             <span style={{ alignSelf: "flex-start", borderRadius: 999, padding: "6px 14px", fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", background: item.tagBg, color: "#111111" }}>
