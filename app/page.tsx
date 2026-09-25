@@ -462,7 +462,7 @@ export default function Home() {
         const stop1 = 40 + Math.sin(t * 0.075) * 15;
         const stop2 = 82 + Math.sin(t * 0.055 + 1.5) * 12;
         const fade = 0.82 + Math.sin(t * 0.095) * 0.18;
-        el.style.background = `linear-gradient(${angle}deg,#FFFFFF 0%,#F4F3C6 ${stop1}%,#DEEB3A ${stop2}%)`;
+        el.style.background = `linear-gradient(${angle}deg,#FFFFFF 0%,var(--accent-pale) ${stop1}%,var(--accent) ${stop2}%)`;
         el.style.opacity = String(fade);
       }
       raf = requestAnimationFrame(tick);
@@ -685,7 +685,7 @@ export default function Home() {
           style={{
             position: "absolute",
             inset: 0,
-            background: "linear-gradient(180deg,#FFFFFF 0%,#F4F3C6 45%,#DEEB3A 100%)",
+            background: "linear-gradient(180deg,#FFFFFF 0%,var(--accent-pale) 45%,var(--accent) 100%)",
             zIndex: 0,
           }}
         />
@@ -912,14 +912,14 @@ export default function Home() {
                 border-radius: 999px;
                 outline: none;
                 cursor: pointer;
-                background: linear-gradient(to right, #DEEB3A 0%, #EFF3A8 ${((radius - 1) / 24) * 100}%, #EAE7DF ${((radius - 1) / 24) * 100}%, #EAE7DF 100%);
+                background: linear-gradient(to right, var(--accent) 0%, var(--accent-light) ${((radius - 1) / 24) * 100}%, #EAE7DF ${((radius - 1) / 24) * 100}%, #EAE7DF 100%);
               }
               .landed-radius-slider::-webkit-slider-thumb {
                 -webkit-appearance: none;
                 width: 26px;
                 height: 26px;
                 border-radius: 50%;
-                background: #DEEB3A;
+                background: var(--accent);
                 opacity: 0.85;
                 border: none;
                 cursor: pointer;
@@ -928,7 +928,7 @@ export default function Home() {
                 width: 26px;
                 height: 26px;
                 border-radius: 50%;
-                background: #DEEB3A;
+                background: var(--accent);
                 opacity: 0.85;
                 border: none;
                 cursor: pointer;
@@ -936,7 +936,7 @@ export default function Home() {
               .landed-radius-slider::-moz-range-track {
                 height: 14px;
                 border-radius: 999px;
-                background: linear-gradient(to right, #DEEB3A 0%, #EFF3A8 ${((radius - 1) / 24) * 100}%, #EAE7DF ${((radius - 1) / 24) * 100}%, #EAE7DF 100%);
+                background: linear-gradient(to right, var(--accent) 0%, var(--accent-light) ${((radius - 1) / 24) * 100}%, #EAE7DF ${((radius - 1) / 24) * 100}%, #EAE7DF 100%);
               }
             `}</style>
             <input

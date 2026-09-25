@@ -58,7 +58,7 @@ export function PlanSheetItems({
                 <span style={{ fontSize: 12, color: "#3E3E3A" }}>{item.unit}</span>
               </div>
               {item.hasApiBooking ? (
-                <span style={{ display: "flex", alignItems: "center", gap: 6, borderRadius: 999, padding: "8px 14px", fontSize: 11, fontWeight: 700, background: "#DEEB3A", color: "#111111" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 6, borderRadius: 999, padding: "8px 14px", fontSize: 11, fontWeight: 700, background: "var(--accent)", color: "#111111" }}>
                   ✓ Booked
                 </span>
               ) : (

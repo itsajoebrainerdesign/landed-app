@@ -31,7 +31,7 @@ export const BUDGET_OPTIONS: { key: BudgetKey; label: string }[] = [
 
 // The app's one brand gradient, used on every primary CTA button across
 // every page.
-export const CTA_GRADIENT = "linear-gradient(100deg,#EFF3A8 0%,#DEEB3A 100%)";
+export const CTA_GRADIENT = "linear-gradient(100deg,var(--accent-light) 0%,var(--accent) 100%)";
 
 // Budgets saved before the Low tier was merged into Modest.
 export function normalizeBudget(value: string | null | undefined): BudgetKey {

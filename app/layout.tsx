@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import NavBar from "./NavBar";
 import { ServiceWorker } from "./components/ServiceWorker";
+import { ACCENT_BOOT_SCRIPT } from "./lib/accent";
 
 export const metadata: Metadata = {
   title: "Landed",
@@ -29,7 +30,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* The accent colour chosen in Account, applied before first paint. */}
+        <script dangerouslySetInnerHTML={{ __html: ACCENT_BOOT_SCRIPT }} />
+      </head>
       <body className="font-nuckle">
         {children}
         <NavBar />

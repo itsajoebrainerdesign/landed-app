@@ -60,7 +60,7 @@ function BookingCard({
               fontSize: 10,
               fontWeight: 700,
               letterSpacing: "0.04em",
-              background: booking.confirmed ? "#DEEB3A" : "#EAE7DF",
+              background: booking.confirmed ? "var(--accent)" : "#EAE7DF",
               color: "#111111",
             }}
           >
@@ -360,7 +360,7 @@ export default function Bookings() {
           style={{ position: "fixed", left: 21, right: 21, bottom: "calc(env(safe-area-inset-bottom, 0px) + 112px)", zIndex: 101, borderRadius: 999, background: "#111111", color: "#FFFFFF", padding: "10px 10px 10px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 13 }}
         >
           <span>{removed.confirmed ? "Booking" : "Draft"} removed</span>
-          <button onClick={undoRemove} style={{ borderRadius: 999, padding: "6px 14px", fontSize: 12, fontWeight: 700, border: "none", background: "#DEEB3A", color: "#111111", cursor: "pointer" }}>
+          <button onClick={undoRemove} style={{ borderRadius: 999, padding: "6px 14px", fontSize: 12, fontWeight: 700, border: "none", background: "var(--accent)", color: "#111111", cursor: "pointer" }}>
             Undo
           </button>
         </div>

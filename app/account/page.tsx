@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { CTA_GRADIENT } from "../lib/constants";
+import { AccentPicker } from "../components/AccentPicker";
 import type { AccountInfo } from "../lib/accountStore";
 import {
   accountsEnabled,
@@ -338,6 +339,8 @@ export default function Account() {
         )}
       </div>
       )}
+
+      <AccentPicker />
 
       {/* Payment method — UI only. Real card collection has to happen
           through Stripe's own hosted Elements with a backend holding the

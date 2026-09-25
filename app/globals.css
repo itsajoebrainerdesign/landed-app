@@ -20,3 +20,12 @@ body {
   background: #ffffff;
   margin: 0;
 }
+
+/* The app's accent colour (the green in the gradients, buttons, slider
+   and badges). --accent can be changed in Account (app/lib/accent.ts);
+   the lighter shades are mixed from it with white, so they follow. */
+:root {
+  --accent: #deeb3a;
+  --accent-light: color-mix(in srgb, var(--accent) 45%, #ffffff);
+  --accent-pale: color-mix(in srgb, var(--accent) 33%, #ffffff);
+}
