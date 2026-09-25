@@ -124,8 +124,13 @@ in as it's found:
 Measured 2026-09-25 (St Albans): draft at 0.9 s, all categories by 11 s
 (was ~37 s as one big AI call), repeat search 0.01 s.
 
-- **Cost per new search**: roughly 30–40p (Claude ~15–20p, Google Places
-  ~8–12 Enterprise-tier requests). Cached searches cost nothing.
+- **Models**: Sonnet 5 picks stays, restaurants, attractions, bars and
+  parking from Google's lists; Opus 5 does live (web search for what's
+  on). Set per category in `CATEGORY_MODEL` in the route.
+- **Cost per new search**: roughly 25–35p (Claude ~10–18p, Google Places
+  ~8–14 Enterprise-tier requests). Cached searches cost nothing. Each
+  search logs its estimated cost (`[api/plan] … cost ≈ $…`) in Vercel's
+  logs.
 
 Protections:
 

@@ -86,7 +86,48 @@ const MAX_DISTANCE_KM: Record<CategoryKey, number> = {
   stay: 8,
 };
 
-const MODEL = "claude-opus-5";
+// Which Claude model picks the venues for each category. Every category
+// except "live" chooses from its Google list (a simple job); "live" also
+// searches the web for what's on (harder). Change a line here to switch.
+//
+// Tested 2026-09-25 on St Albans, Leverstock Green and Harpenden (see the
+// model trial): Sonnet 5 on the list categories matched Opus 5's picks and
+// tiers, finished them in ~5–6 s instead of 6–10 s, at roughly half the AI
+// cost. Opus stays on "live": Sonnet was slower there (28–37 s vs 15–19 s)
+// and read far more web text. Haiku 4.5 was ruled out — wrong tiers
+// (Domino's as "luxury"), missing timeframes, prices too low.
+const CATEGORY_MODEL: Record<CategoryKey, ModelId> = {
+  stay: "claude-sonnet-5",
+  restaurant: "claude-sonnet-5",
+  attractions: "claude-sonnet-5",
+  bar: "claude-sonnet-5",
+  live: "claude-opus-5",
+  parking: "claude-sonnet-5",
+};
+
+// What each model supports: adaptive thinking and "effort" (Opus 5,
+// Sonnet 5 — not Haiku 4.5), the server-side refusal fallback (used on
+// Opus 5), and which web search tool version it takes. Prices are list
+// prices in USD per million tokens, for the cost log.
+type ModelId = "claude-opus-5" | "claude-sonnet-5" | "claude-haiku-4-5";
+const MODEL_SETUP: Record<
+  ModelId,
+  { adaptiveThinking: boolean; effort: boolean; refusalFallback: boolean; webSearch: "web_search_20260209" | "web_search_20250305"; usdPerMInput: number; usdPerMOutput: number }
+> = {
+  "claude-opus-5": { adaptiveThinking: true, effort: true, refusalFallback: true, webSearch: "web_search_20260209", usdPerMInput: 5, usdPerMOutput: 25 },
+  "claude-sonnet-5": { adaptiveThinking: true, effort: true, refusalFallback: false, webSearch: "web_search_20260209", usdPerMInput: 2, usdPerMOutput: 10 },
+  "claude-haiku-4-5": { adaptiveThinking: false, effort: false, refusalFallback: false, webSearch: "web_search_20250305", usdPerMInput: 1, usdPerMOutput: 5 },
+};
+const USD_PER_WEB_SEARCH = 0.01;
+// Google Places Nearby / Text Search with Enterprise-tier fields (rating,
+// phone, opening hours), list price before the monthly free allowance.
+const USD_PER_PLACES_REQUEST = 0.035;
+
+// Running cost of one search, logged when it finishes.
+type SearchUsage = { inputTokens: number; outputTokens: number; webSearches: number; placesRequests: number; usd: number };
+function newUsage(): SearchUsage {
+  return { inputTokens: 0, outputTokens: 0, webSearches: 0, placesRequests: 0, usd: 0 };
+}
 // Every venue is labelled with a budget tier, and each tier needs its own
 // pool — the plan's pick plus 3 swaps at that budget. So: about this many
 // per tier per category (across all three timeframes)…
@@ -102,7 +143,7 @@ const CACHE_MAX_ENTRIES = 500;
 // TESTING: per-user and per-guest search limits are switched off while
 // the app is being tested, so every search runs. Set this back to true
 // before sharing the app more widely — each uncached search costs about
-// 30–40p (Claude + Google Places). The per-IP flood guard below stays on.
+// 25–35p (Claude + Google Places). The per-IP flood guard below stays on.
 const SEARCH_LIMITS_ON = false;
 
 // Uncached live searches per signed-in user.
@@ -435,7 +476,7 @@ type PlanData = {
   hours: Record<string, OpeningHours | null>;
 };
 
-type BuildResult = { data: PlanData | null; warnings: string[]; complete: boolean };
+type BuildResult = { data: PlanData | null; warnings: string[]; complete: boolean; usage: SearchUsage };
 
 function emptyPlan(): PlanData {
   return { pool: {}, tonight: {}, tomorrow: {}, hours: {} };
@@ -516,16 +557,17 @@ async function buildPlan(input: PlanRequest, emit: Emit): Promise<BuildResult> {
   const placesKey = process.env.GOOGLE_PLACES_API_KEY;
   if (!placesKey) {
     warnings.push("GOOGLE_PLACES_API_KEY is not set — live results are disabled.");
-    return { data: null, warnings, complete: false };
+    return { data: null, warnings, complete: false, usage: newUsage() };
   }
 
   // 1) What's actually near the pin, from Google → the instant draft.
-  const lists = await findNearbyLists(input, placesKey, warnings);
+  const usage = newUsage();
+  const lists = await findNearbyLists(input, placesKey, warnings, usage);
   const draft = draftFromLists(lists, input);
   if (hasVenues(draft)) emit({ type: "draft", options: serveOptions(draft, Date.now()) });
   if (!anthropicKey) {
     warnings.push("ANTHROPIC_API_KEY is not set — showing Google's nearby places without AI picks.");
-    return { data: hasVenues(draft) ? draft : null, warnings, complete: false };
+    return { data: hasVenues(draft) ? draft : null, warnings, complete: false, usage };
   }
 
   // 2) One small AI call per category, all at once; each category is sent
@@ -536,7 +578,7 @@ async function buildPlan(input: PlanRequest, emit: Emit): Promise<BuildResult> {
   const started = Date.now();
   await Promise.all(
     CATEGORY_ORDER.map(async (cat) => {
-      const part = await searchCategory(cat, input, anthropicKey, placesKey, lists, warnings).catch((err) => {
+      const part = await searchCategory(cat, input, anthropicKey, placesKey, lists, warnings, usage).catch((err) => {
         console.error(`[api/plan] ${cat} search failed`, err);
         return null;
       });
@@ -550,10 +592,12 @@ async function buildPlan(input: PlanRequest, emit: Emit): Promise<BuildResult> {
   console.info(
     `[api/plan] ${input.location} ${input.vibe}: listed ` +
       CATEGORY_ORDER.map((c) => `${c} ${lists[c]?.length ?? 0}`).join(" / ") +
-      `; AI done for ${aiDone}/${CATEGORY_ORDER.length} categories in ${((Date.now() - started) / 1000).toFixed(1)}s`
+      `; AI done for ${aiDone}/${CATEGORY_ORDER.length} categories in ${((Date.now() - started) / 1000).toFixed(1)}s` +
+      `; cost ≈ $${usage.usd.toFixed(3)} (${usage.inputTokens} in / ${usage.outputTokens} out tokens, ` +
+      `${usage.webSearches} web searches, ${usage.placesRequests} Places requests)`
   );
   if (aiDone < CATEGORY_ORDER.length) warnings.push(`${CATEGORY_ORDER.length - aiDone} categories are showing Google's nearby places without AI picks.`);
-  return { data: hasVenues(result) ? result : null, warnings, complete: aiDone === CATEGORY_ORDER.length };
+  return { data: hasVenues(result) ? result : null, warnings, complete: aiDone === CATEGORY_ORDER.length, usage };
 }
 
 // The draft: Google's nearby places as they are — tiered by Google's price
@@ -593,11 +637,12 @@ async function searchCategory(
   anthropicKey: string,
   placesKey: string,
   lists: NearbyLists,
-  warnings: string[]
+  warnings: string[],
+  usage: SearchUsage
 ): Promise<PlanData | null> {
-  const candidates = await findCandidatesForCategory(cat, input, anthropicKey, lists[cat] ?? [], warnings);
+  const candidates = await findCandidatesForCategory(cat, input, anthropicKey, lists[cat] ?? [], warnings, usage);
   if (candidates.length === 0) return null;
-  const verified = await verifyWithGooglePlaces(candidates, input, placesKey, warnings, lists);
+  const verified = await verifyWithGooglePlaces(candidates, input, placesKey, warnings, lists, usage);
   if (verified.length === 0) return null;
   return assemble(verified, input);
 }
@@ -686,8 +731,11 @@ async function findCandidatesForCategory(
   input: PlanRequest,
   apiKey: string,
   list: NearbyPlace[],
-  warnings: string[]
+  warnings: string[],
+  usage: SearchUsage
 ): Promise<Candidate[]> {
+  const model = CATEGORY_MODEL[cat];
+  const setup = MODEL_SETUP[model];
   const client = new Anthropic({ apiKey, timeout: 120_000, maxRetries: 1 });
   const vibeLabel = VIBE_OPTIONS.find((o) => o.key === input.vibe)!.label;
   const isLive = cat === "live";
@@ -713,7 +761,7 @@ async function findCandidatesForCategory(
         // Only "live" needs the web (what's on); every other category is
         // chosen from its Google list. No user_location: web search rejects
         // some countries in it (e.g. "IE" → 400); the prompt has coordinates.
-        { type: "web_search_20260209", name: "web_search", max_uses: 2 },
+        { type: setup.webSearch, name: "web_search", max_uses: 2 },
         SUBMIT_TOOL,
       ]
     : [SUBMIT_TOOL];
@@ -725,18 +773,24 @@ async function findCandidatesForCategory(
     let response: Anthropic.Beta.BetaMessage;
     try {
       response = await client.beta.messages.create({
-        model: MODEL,
+        model,
         max_tokens: 8000,
-        // Server-side refusal fallback: if a safety classifier declines,
-        // the API retries on a fallback model inside the same call.
-        betas: ["server-side-fallback-2026-07-01"],
-        fallbacks: "default",
-        thinking: { type: "adaptive" },
-        output_config: { effort: "low" },
+        // Server-side refusal fallback (Opus 5): if a safety classifier
+        // declines, the API retries on a fallback model in the same call.
+        ...(setup.refusalFallback ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {}),
+        ...(setup.adaptiveThinking ? { thinking: { type: "adaptive" as const } } : {}),
+        ...(setup.effort ? { output_config: { effort: "low" as const } } : {}),
         system: SYSTEM_PROMPT,
         tools,
         messages,
       });
+      usage.inputTokens += response.usage.input_tokens + (response.usage.cache_read_input_tokens ?? 0) + (response.usage.cache_creation_input_tokens ?? 0);
+      usage.outputTokens += response.usage.output_tokens;
+      const searches = response.usage.server_tool_use?.web_search_requests ?? 0;
+      usage.webSearches += searches;
+      usage.usd +=
+        (response.usage.input_tokens * setup.usdPerMInput + response.usage.output_tokens * setup.usdPerMOutput) / 1e6 +
+        searches * USD_PER_WEB_SEARCH;
     } catch (err) {
       if (err instanceof Anthropic.AuthenticationError) {
         warnings.push("Anthropic rejected ANTHROPIC_API_KEY (401).");
@@ -962,8 +1016,13 @@ async function nearbySearch(q: NearbyQuery, radiusKm: number, input: PlanRequest
   return ((await res.json()) as { places?: Place[] }).places ?? [];
 }
 
-async function listCategory(cat: CategoryKey, input: PlanRequest, apiKey: string): Promise<NearbyPlace[]> {
+async function listCategory(cat: CategoryKey, input: PlanRequest, apiKey: string, usage: SearchUsage): Promise<NearbyPlace[]> {
   const queries = NEARBY_QUERIES[cat];
+  const count = () => {
+    usage.placesRequests++;
+    usage.usd += USD_PER_PLACES_REQUEST;
+  };
+  queries.forEach(count);
   let places = (await Promise.all(queries.map((q) => nearbySearch(q, q.radiusKm, input, apiKey)))).flat();
   const usable = (list: Place[]) =>
     list.filter(
@@ -975,6 +1034,7 @@ async function listCategory(cat: CategoryKey, input: PlanRequest, apiKey: string
     );
   // Quiet area: widen once to the category's limit.
   if (usable(places).length < THIN_LIST && queries[0].radiusKm < MAX_DISTANCE_KM[cat]) {
+    count();
     places = places.concat(await nearbySearch(queries[0], MAX_DISTANCE_KM[cat], input, apiKey));
   }
   const seenIds = new Set<string>();
@@ -996,13 +1056,13 @@ async function listCategory(cat: CategoryKey, input: PlanRequest, apiKey: string
 
 // All categories in parallel (well under a second). A category whose list
 // fails just has no list — its AI call suggests places on its own.
-async function findNearbyLists(input: PlanRequest, apiKey: string, warnings: string[]): Promise<NearbyLists> {
+async function findNearbyLists(input: PlanRequest, apiKey: string, warnings: string[], usage: SearchUsage): Promise<NearbyLists> {
   const lists: NearbyLists = {};
   const failed: string[] = [];
   await Promise.all(
     CATEGORY_ORDER.map(async (cat) => {
       try {
-        lists[cat] = await listCategory(cat, input, apiKey);
+        lists[cat] = await listCategory(cat, input, apiKey, usage);
       } catch (err) {
         console.error(`[api/plan] nearby ${cat} list failed`, err);
         failed.push(CATEGORY_LABELS[cat]);
@@ -1046,12 +1106,18 @@ async function verifyWithGooglePlaces(
   input: PlanRequest,
   apiKey: string,
   warnings: string[],
-  nearbyLists: NearbyLists = {}
+  nearbyLists: NearbyLists = {},
+  usage?: SearchUsage
 ): Promise<Verified[]> {
   const results = await Promise.allSettled(
     candidates.map((c) => {
       const fromNearby = matchNearby(c, nearbyLists);
-      return fromNearby ? Promise.resolve(fromNearby) : lookupPlace(c, input, apiKey);
+      if (fromNearby) return Promise.resolve(fromNearby);
+      if (usage) {
+        usage.placesRequests++;
+        usage.usd += USD_PER_PLACES_REQUEST;
+      }
+      return lookupPlace(c, input, apiKey);
     })
   );
   const verified: Verified[] = [];
