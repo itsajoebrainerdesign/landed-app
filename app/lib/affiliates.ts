@@ -1,11 +1,11 @@
 // Affiliate booking links beyond Booking.com (stays — see urls.ts).
 //
-// Once a programme below is set up, the main button on that category's
-// venue cards in the plan sheets books through the partner, carrying our
-// tracking so bookings earn commission (a venue the partner doesn't list
-// shows the partner's nearby alternatives). Until the programme's IDs are
-// set, the button keeps linking to the venue's own website, a ticket
-// search, or directions.
+// The main button on a venue card books through a partner only when the
+// venue has a confirmed page on that partner (`partnerUrl`, found by
+// checking the partner when the plan is searched) — never a search on
+// the partner's site, which would show other venues. The link is then
+// wrapped in our tracking so the booking earns commission. Otherwise the
+// button goes to the venue's own website (or ticket search / directions).
 //
 // Setup (Vercel → Settings → Environment Variables, then redeploy):
 // - Awin programmes (OpenTable, Ticketmaster, JustPark): your Awin
@@ -24,7 +24,7 @@ const AWIN_MID = {
 };
 const GETYOURGUIDE_PARTNER_ID = process.env.NEXT_PUBLIC_GETYOURGUIDE_PARTNER_ID || "";
 
-type Venue = { title: string; lat?: number; lng?: number };
+type Venue = { partnerUrl?: string };
 
 // Awin's deep link: sends the person to `destination`, tracked to us.
 function awin(mid: string, destination: string): string | null {
@@ -33,34 +33,35 @@ function awin(mid: string, destination: string): string | null {
   return "https://www.awin1.com/cread.php?" + params.toString();
 }
 
-const withArea = (name: string, area?: string) => (area ? `${name} ${area}` : name);
-
 type PartnerLink = { href: string; label: string; sponsored: true };
 
-// The partner link for a venue's main button, or null when that
-// category's programme isn't set up.
-export function partnerLink(cat: string, venue: Venue, area?: string): PartnerLink | null {
-  if (cat === "restaurant" || cat === "bar") {
-    const href = awin(AWIN_MID.opentable, "https://www.opentable.co.uk/s?term=" + encodeURIComponent(withArea(venue.title, area)));
-    return href ? { href, label: "Book ↗", sponsored: true } : null;
+// Which programme each partner's pages belong to.
+function trackedLink(url: string): string | null {
+  let host: string;
+  try {
+    host = new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return null;
   }
-  if (cat === "live") {
-    const href = awin(AWIN_MID.ticketmaster, "https://www.ticketmaster.co.uk/search?q=" + encodeURIComponent(withArea(venue.title, area)));
-    return href ? { href, label: "Get Tickets ↗", sponsored: true } : null;
-  }
-  if (cat === "attractions") {
+  if (host.endsWith("opentable.co.uk") || host.endsWith("opentable.com")) return awin(AWIN_MID.opentable, url);
+  if (host.endsWith("ticketmaster.co.uk")) return awin(AWIN_MID.ticketmaster, url);
+  if (host.endsWith("justpark.com")) return awin(AWIN_MID.justpark, url);
+  if (host.endsWith("getyourguide.co.uk") || host.endsWith("getyourguide.com")) {
     if (!GETYOURGUIDE_PARTNER_ID) return null;
-    const params = new URLSearchParams({ q: withArea(venue.title, area), partner_id: GETYOURGUIDE_PARTNER_ID, utm_medium: "online_publisher" });
-    return { href: "https://www.getyourguide.co.uk/s/?" + params.toString(), label: "Get Tickets ↗", sponsored: true };
-  }
-  if (cat === "parking") {
-    const params = new URLSearchParams({ q: withArea(venue.title, area) });
-    if (typeof venue.lat === "number" && typeof venue.lng === "number") {
-      params.set("lat", venue.lat.toFixed(6));
-      params.set("lng", venue.lng.toFixed(6));
-    }
-    const href = awin(AWIN_MID.justpark, "https://www.justpark.com/search/?" + params.toString());
-    return href ? { href, label: "Book Parking ↗", sponsored: true } : null;
+    const u = new URL(url);
+    u.searchParams.set("partner_id", GETYOURGUIDE_PARTNER_ID);
+    u.searchParams.set("utm_medium", "online_publisher");
+    return u.toString();
   }
   return null;
+}
+
+const LABELS: Record<string, string> = { restaurant: "Book ↗", bar: "Book ↗", live: "Get Tickets ↗", attractions: "Get Tickets ↗", parking: "Book Parking ↗" };
+
+// The tracked partner link for a venue's main button: only when the venue
+// has a confirmed partner page and that partner's programme is set up.
+export function partnerLink(cat: string, venue: Venue): PartnerLink | null {
+  if (!venue.partnerUrl || !LABELS[cat]) return null;
+  const href = trackedLink(venue.partnerUrl);
+  return href ? { href, label: LABELS[cat], sponsored: true } : null;
 }

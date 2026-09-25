@@ -40,6 +40,10 @@ export type CategoryOption = {
   // The venue's own website, from Google — booking and ticket links go
   // here, or to a Google search when it's missing.
   website?: string;
+  // The venue's own page on an affiliate partner (OpenTable, Ticketmaster,
+  // …), set only when the search confirmed it's listed there. The main
+  // button books through it (app/lib/affiliates.ts).
+  partnerUrl?: string;
   // Photos from Google Places (one per venue — each one shown is billed).
   photos?: VenuePhoto[];
 };

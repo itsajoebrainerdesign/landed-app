@@ -38,6 +38,7 @@ export type SavedItem = {
   lng?: number;
   photos?: VenuePhoto[];
   website?: string;
+  partnerUrl?: string;
 };
 export type SavedBooking = {
   id: string;

@@ -31,6 +31,7 @@ function resultsFromSavedItems(items: Record<string, SavedItem>): LiveResults {
         lng: item.lng,
         photos: item.photos,
         website: item.website,
+        partnerUrl: item.partnerUrl,
       },
     ];
   }
@@ -177,6 +178,7 @@ export default function Home() {
         lng: item.lng,
         photos: item.photos,
         website: item.website,
+        partnerUrl: item.partnerUrl,
       });
     });
   }

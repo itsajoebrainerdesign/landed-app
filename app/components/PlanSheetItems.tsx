@@ -16,6 +16,7 @@ type SheetItem = {
   lat?: number;
   lng?: number;
   website?: string;
+  partnerUrl?: string;
   hasApiBooking?: boolean;
 };
 
@@ -39,9 +40,10 @@ export function PlanSheetItems({
   return (
     <>
       {items.map(([cat, item]) => {
-        // Through the category's affiliate partner once it's set up;
-        // otherwise the venue's website / ticket search / directions.
-        const link = partnerLink(cat, item, area) ?? planItemLink(cat, item, area, time, vibe, areaPos);
+        // Through the venue's confirmed partner page when there is one
+        // (and that programme is set up); otherwise the venue's website /
+        // ticket search / directions.
+        const link = partnerLink(cat, item) ?? planItemLink(cat, item, area, time, vibe, areaPos);
         return (
           <div key={cat} style={{ borderRadius: 20, background: "#F7F5EE", padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
             <span style={{ alignSelf: "flex-start", borderRadius: 999, padding: "6px 14px", fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", background: item.tagBg, color: "#111111" }}>
@@ -80,7 +82,7 @@ export function PlanSheetItems({
       })}
       {/* Affiliate disclosure (UK advertising rules), whenever a tracked
           link is showing: Booking.com for stays, or a partner link. */}
-      {items.some(([cat, item]) => (cat === "stay" && AFFILIATE_LINKS_ON) || (!item.hasApiBooking && partnerLink(cat, item, area))) && (
+      {items.some(([cat, item]) => (cat === "stay" && AFFILIATE_LINKS_ON) || (!item.hasApiBooking && partnerLink(cat, item))) && (
         <span style={{ fontSize: 11, color: "#767766" }}>We may earn a commission if you book through some of these links.</span>
       )}
     </>

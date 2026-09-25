@@ -34,10 +34,11 @@ drink, see something live, and park — around a place and a vibe.
   Affiliate Partner ID) to earn commission; the booking sheet then shows a
   short affiliate disclosure. Restaurants, bars, attractions, live and
   parking link to the venue (its website, a ticket search, directions);
-  once their programmes are set up (`app/lib/affiliates.ts`), that
-  button books through the partner instead, tracked — OpenTable
-  (restaurants and bars), Ticketmaster (live), GetYourGuide
-  (attractions), JustPark (parking).
+  with a partner programme set up (`app/lib/affiliates.ts`), that button
+  books through the partner, tracked — but only for a venue with a
+  confirmed page there (`partnerUrl`); otherwise it stays the venue's
+  own website. OpenTable (restaurants and bars), Ticketmaster (live),
+  GetYourGuide (attractions), JustPark (parking).
   See `.env.local.example` for the IDs each one needs.
 - **Not built yet**: payments (Stripe — the Account page's payment section
   is a placeholder), partner booking APIs (the "Connect" buttons are
