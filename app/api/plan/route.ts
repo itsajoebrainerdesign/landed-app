@@ -292,16 +292,21 @@ async function buildPlan(input: PlanRequest): Promise<PlanResponse> {
   if (!placesKey) warnings.push("GOOGLE_PLACES_API_KEY is not set — venues can't be verified, so live results are disabled.");
   if (!anthropicKey || !placesKey) return staticResponse(warnings);
 
-  const candidates = await findCandidatesWithAI(input, anthropicKey, warnings);
+  // Real places to stay near the pin, from Google, handed to the AI so it
+  // picks stays from what's actually there (and small local B&Bs and
+  // guesthouses aren't missed). Fast (<1 s); if it fails, the AI searches
+  // for stays on its own as before.
+  const nearbyStays = await findNearbyStays(input, placesKey, warnings);
+  const candidates = await findCandidatesWithAI(input, anthropicKey, warnings, nearbyStays);
   if (candidates.length === 0) return staticResponse(warnings);
 
-  const verified = await verifyWithGooglePlaces(candidates, input, placesKey, warnings);
+  const verified = await verifyWithGooglePlaces(candidates, input, placesKey, warnings, nearbyStays);
   const options = rankAndAssemble(verified, input);
   const count = (t: TimeKey) => Object.values(options[t] ?? {}).reduce((n, o) => n + (o?.length ?? 0), 0);
   const source = TIME_KEYS.some((t) => count(t) > 0) ? "live" : "static";
   if (source === "static") warnings.push("No AI candidates could be verified in Google Places.");
   console.info(
-    `[api/plan] ${input.location} ${input.vibe}: ${candidates.length} candidates, ${verified.length} verified, kept ` +
+    `[api/plan] ${input.location} ${input.vibe}: ${nearbyStays.length} nearby stays listed, ${candidates.length} candidates, ${verified.length} verified, kept ` +
       TIME_KEYS.map((t) => `${t} ${count(t)}`).join(" / ")
   );
   return { options, source, warnings };
@@ -389,7 +394,12 @@ Guidance:
 - When you're done, call submit_venues once with everything. Don't write a prose answer.`;
 
 
-async function findCandidatesWithAI(input: PlanRequest, apiKey: string, warnings: string[]): Promise<Candidate[]> {
+async function findCandidatesWithAI(
+  input: PlanRequest,
+  apiKey: string,
+  warnings: string[],
+  nearbyStays: NearbyStay[]
+): Promise<Candidate[]> {
   const client = new Anthropic({ apiKey, timeout: 180_000, maxRetries: 1 });
   const vibeLabel = VIBE_OPTIONS.find((o) => o.key === input.vibe)!.label;
   const messages: Anthropic.Beta.BetaMessageParam[] = [
@@ -400,7 +410,20 @@ async function findCandidatesWithAI(input: PlanRequest, apiKey: string, warnings
         // The pin's time zone isn't known here, so give the exact UTC
         // instant and let the model work out local time for the location.
         `Current time: ${new Date().toISOString()} UTC — use the pin's local time for now / tonight / tomorrow.\n` +
-        `Vibe: ${vibeLabel} (${input.vibe})`,
+        `Vibe: ${vibeLabel} (${input.vibe})` +
+        (nearbyStays.length > 0
+          ? `\n\nPlaces to stay near the pin, from Google Maps (closest first):\n` +
+            nearbyStays
+              .map(
+                (st, i) =>
+                  `${i + 1}. ${st.place.displayName?.text} — ${st.distanceKm.toFixed(1)} km — ${lodgingKind(st.place)}` +
+                  (typeof st.place.rating === "number"
+                    ? ` — ★${st.place.rating.toFixed(1)}${st.place.userRatingCount ? ` (${st.place.userRatingCount} reviews)` : ""}`
+                    : "")
+              )
+              .join("\n") +
+            `\nChoose stays from this list (use the names exactly as written), favouring close ones that suit the vibe, with a spread of prices. Only add a stay from elsewhere if nothing here suits.`
+          : ""),
     },
   ];
 
@@ -514,6 +537,8 @@ type Place = {
   shortFormattedAddress?: string;
   internationalPhoneNumber?: string;
   rating?: number;
+  userRatingCount?: number;
+  primaryType?: string;
   location?: { latitude: number; longitude: number };
   businessStatus?: string;
   currentOpeningHours?: { openNow?: boolean };
@@ -580,13 +605,97 @@ class PlacesError extends Error {
   }
 }
 
+// ── Nearby places to stay (Google Places Nearby Search) ──────────────────
+
+type NearbyStay = { place: Place; distanceKm: number };
+
+// One Nearby Search call: up to 20 places to stay within the stay limit of
+// the pin, closest first, with the same fields a Text Search lookup gets —
+// so a stay picked from this list needs no separate verification lookup.
+//
+// Only proper accommodation (by Google's *primary* type): Google's generic
+// "lodging" is mostly individual holiday lets, which otherwise fill the 20
+// slots and crowd out real hotels. Places with fewer than 3 reviews, and
+// repeated names (the same let listed several times), are dropped too.
+const STAY_PRIMARY_TYPES = [
+  "hotel",
+  "bed_and_breakfast",
+  "guest_house",
+  "inn",
+  "hostel",
+  "motel",
+  "resort_hotel",
+  "extended_stay_hotel",
+  "farmstay",
+];
+const MIN_STAY_REVIEWS = 3;
+async function findNearbyStays(input: PlanRequest, apiKey: string, warnings: string[]): Promise<NearbyStay[]> {
+  try {
+    const res = await fetch("https://places.googleapis.com/v1/places:searchNearby", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Goog-Api-Key": apiKey, "X-Goog-FieldMask": PLACES_FIELDS + ",places.userRatingCount,places.primaryType" },
+      body: JSON.stringify({
+        includedPrimaryTypes: STAY_PRIMARY_TYPES,
+        maxResultCount: 20,
+        rankPreference: "DISTANCE",
+        locationRestriction: {
+          circle: { center: { latitude: input.lat, longitude: input.lng }, radius: MAX_DISTANCE_KM.stay * 1000 },
+        },
+      }),
+      signal: AbortSignal.timeout(10_000),
+      cache: "no-store",
+    });
+    if (!res.ok) throw new PlacesError(res.status, (await res.text().catch(() => "")).slice(0, 300));
+    const data = (await res.json()) as { places?: Place[] };
+    const seenNames = new Set<string>();
+    return (data.places ?? [])
+      .filter((p) => p.location && p.displayName?.text && (!p.businessStatus || p.businessStatus === "OPERATIONAL"))
+      .filter((p) => (p.userRatingCount ?? 0) >= MIN_STAY_REVIEWS)
+      .filter((p) => {
+        const name = p.displayName!.text.trim().toLowerCase();
+        if (seenNames.has(name)) return false;
+        seenNames.add(name);
+        return true;
+      })
+      .map((place) => ({
+        place,
+        distanceKm: haversineKm({ lat: input.lat, lng: input.lng }, { lat: place.location!.latitude, lng: place.location!.longitude }),
+      }));
+  } catch (err) {
+    console.error("[api/plan] nearby stays lookup failed — AI will search for stays itself", err);
+    warnings.push("Couldn't list nearby places to stay from Google; stays come from the AI search alone.");
+    return [];
+  }
+}
+
+// "Hotel", "B&B", "Guest house"… for the AI's list.
+function lodgingKind(place: Place): string {
+  const t = place.primaryType || place.types?.[0] || "lodging";
+  return t.replace(/_/g, " ");
+}
+
+// A stay the AI picked from the nearby list: same place, no lookup needed.
+function matchNearbyStay(candidate: Candidate, nearbyStays: NearbyStay[]): Place | null {
+  const norm = (n: string) => n.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+  const exact = nearbyStays.find((st) => norm(st.place.displayName!.text) === norm(candidate.name));
+  if (exact) return exact.place;
+  const loose = nearbyStays.find((st) => namesMatch(candidate.name, st.place.displayName!.text));
+  return loose?.place ?? null;
+}
+
 async function verifyWithGooglePlaces(
   candidates: Candidate[],
   input: PlanRequest,
   apiKey: string,
-  warnings: string[]
+  warnings: string[],
+  nearbyStays: NearbyStay[] = []
 ): Promise<Verified[]> {
-  const results = await Promise.allSettled(candidates.map((c) => lookupPlace(c, input, apiKey)));
+  const results = await Promise.allSettled(
+    candidates.map((c) => {
+      const fromNearby = c.category === "stay" ? matchNearbyStay(c, nearbyStays) : null;
+      return fromNearby ? Promise.resolve(fromNearby) : lookupPlace(c, input, apiKey);
+    })
+  );
   const verified: Verified[] = [];
   let failures = 0;
   let firstError: unknown = null;
