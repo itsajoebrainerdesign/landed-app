@@ -153,7 +153,9 @@ function parseRequest(body: unknown): PlanRequest | string {
 type StreamEvent =
   | { type: "draft"; options: LiveOptions }
   | { type: "category"; category: CategoryKey; options: LiveOptions }
-  | { type: "final"; options: LiveOptions; source: "live" | "static"; warnings: string[] };
+  // `cache` says where a cached result came from (for checking the shared
+  // cache works; the app ignores it).
+  | { type: "final"; options: LiveOptions; source: "live" | "static"; warnings: string[]; cache?: "memory" | "shared" };
 type Emit = (event: StreamEvent) => void;
 
 export async function POST(req: NextRequest) {
@@ -207,13 +209,18 @@ export async function POST(req: NextRequest) {
 
 async function handlePlan(input: PlanRequest, ip: string, emit: Emit): Promise<void> {
   const key = cacheKey(input);
-  const served = (data: PlanData) =>
-    emit({ type: "final", options: serveOptions(data, Date.now()), source: "live", warnings: [] });
+  const served = (data: PlanData, cache?: "memory" | "shared") =>
+    emit({ type: "final", options: serveOptions(data, Date.now()), source: "live", warnings: [], cache });
 
-  const cached = readMemoryCache(key) ?? (await readSharedCache(key));
-  if (cached) {
-    writeMemoryCache(key, cached);
-    served(cached);
+  const fromMemory = readMemoryCache(key);
+  if (fromMemory) {
+    served(fromMemory, "memory");
+    return;
+  }
+  const fromShared = await readSharedCache(key);
+  if (fromShared) {
+    writeMemoryCache(key, fromShared);
+    served(fromShared, "shared");
     return;
   }
   // Someone else is already searching this area and vibe — wait for theirs.
