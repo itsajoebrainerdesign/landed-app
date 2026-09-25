@@ -52,7 +52,8 @@ function localDay(offsetDays: number): string {
 }
 
 // "now"/"tonight" book tonight; "tomorrow" books tomorrow night. One night,
-// 2 adults, 1 room — the person can change any of it on Booking.com.
+// 1 room, and the party size for the vibe (partyFor) — the person can
+// change any of it on Booking.com.
 //
 // Booking.com's free-text search often doesn't recognise a hotel's name
 // (it falls back to its homepage), so a stay with a map position opens
@@ -60,10 +61,21 @@ function localDay(offsetDays: number): string {
 // top when Booking.com sells it (Travelodge and Premier Inn don't; then
 // it's the nearest alternatives). Without a position (older saved plans),
 // it searches the area by name.
+// Who's going, by vibe: Family is 2 adults + 1 child, Solo is 1, and
+// Date and Friends are 2 (a friends group varies — 2 is the default the
+// person adjusts on the booking site).
+const CHILD_AGE = 8;
+export function partyFor(vibe?: string): { adults: number; children: number } {
+  if (vibe === "family") return { adults: 2, children: 1 };
+  if (vibe === "solo") return { adults: 1, children: 0 };
+  return { adults: 2, children: 0 };
+}
+
 export function stayBookingUrl(
   stay: { title: string; lat?: number; lng?: number },
   area?: string,
-  time: string = "tonight"
+  time: string = "tonight",
+  vibe?: string
 ) {
   const checkinOffset = time === "tomorrow" ? 1 : 0;
   const params = new URLSearchParams();
@@ -78,9 +90,13 @@ export function stayBookingUrl(
   }
   params.set("checkin", localDay(checkinOffset));
   params.set("checkout", localDay(checkinOffset + 1));
-  params.set("group_adults", "2");
+  const party = partyFor(vibe);
+  params.set("group_adults", String(party.adults));
   params.set("no_rooms", "1");
-  params.set("group_children", "0");
+  params.set("group_children", String(party.children));
+  // Without an age Booking.com assumes a baby (0), which changes the rooms
+  // and prices it shows — assume a school-age child instead.
+  for (let i = 0; i < party.children; i++) params.append("age", String(CHILD_AGE));
   if (BOOKING_AFFILIATE_ID) {
     params.set("aid", BOOKING_AFFILIATE_ID);
     params.set("label", "landed-app"); // shows in your Booking.com reports

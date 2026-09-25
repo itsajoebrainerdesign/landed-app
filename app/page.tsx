@@ -1136,7 +1136,7 @@ export default function Home() {
                       )
                     ) : (
                       <a
-                        href={stayBookingUrl(item, location.name, time)}
+                        href={stayBookingUrl(item, location.name, time, vibe)}
                         target="_blank"
                         rel="noopener noreferrer"
                         style={{ alignSelf: "flex-start", borderRadius: 999, padding: "10px 18px", fontSize: 12, fontWeight: 700, color: "#111111", background: CTA_GRADIENT, textDecoration: "none" }}

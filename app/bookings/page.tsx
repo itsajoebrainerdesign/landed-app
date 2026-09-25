@@ -121,8 +121,8 @@ function BookingCard({
 
 // `area` is the booking's location name (if it has one); `time` sets a
 // stay's dates.
-function linkForCategory(cat: string, name: string, area?: string, time?: string, pos?: { lat?: number; lng?: number }, website?: string) {
-  if (cat === "stay") return { href: stayBookingUrl({ title: name, ...pos }, area, time), label: "Book ↗" };
+function linkForCategory(cat: string, name: string, area?: string, time?: string, pos?: { lat?: number; lng?: number }, website?: string, vibe?: string) {
+  if (cat === "stay") return { href: stayBookingUrl({ title: name, ...pos }, area, time, vibe), label: "Book ↗" };
   if (cat === "attractions" || cat === "live") return { href: ticketSearchUrl(name, area, website), label: "Get Tickets ↗" };
   if (cat === "parking") return { href: mapsUrl(name, area), label: "Get Directions ↗" };
   return { href: bookingSearchUrl(name, area, website), label: "Book ↗" };
@@ -187,7 +187,7 @@ function ViewBookingSheet({
         </span>
         <div style={{ overflowY: "auto", padding: "0 20px 20px", display: "flex", flexDirection: "column", gap: 16, flex: "1 1 auto", minHeight: 0 }}>
           {items.map(([cat, item]) => {
-            const link = linkForCategory(cat, item.title, booking?.location?.name, booking?.time, { lat: item.lat, lng: item.lng }, item.website);
+            const link = linkForCategory(cat, item.title, booking?.location?.name, booking?.time, { lat: item.lat, lng: item.lng }, item.website, booking?.vibe);
             return (
               <div key={cat} style={{ borderRadius: 20, background: "#F7F5EE", padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
                 <span style={{ alignSelf: "flex-start", borderRadius: 999, padding: "6px 14px", fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", background: item.tagBg, color: "#111111" }}>
