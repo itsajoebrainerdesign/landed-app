@@ -99,10 +99,13 @@ export default function Home() {
   // where there's no static plan to fall back on), if it did.
   const [liveStatus, setLiveStatus] = useState<string | null>(null);
   // Whether a live search is in flight (anywhere, including near Galway
-  // where the built-in venues show meanwhile), and a counter so each new
-  // search restarts the loading bar from zero.
+  // where the built-in venues show meanwhile), and when it started — the
+  // loading bar works its progress out from that, so it doesn't restart
+  // when the Search tab is left (for Explore) and shown again. The search
+  // itself runs at page level and carries on regardless of the tab; only
+  // a new place/vibe or + (new enquiry) replaces it.
   const [liveLoading, setLiveLoading] = useState(false);
-  const [searchCount, setSearchCount] = useState(0);
+  const [searchStartedAt, setSearchStartedAt] = useState(0);
 
   // Every option seen this session, by id — so a pick keeps resolving even
   // after the live catalog it came from is replaced (e.g. a swapped live
@@ -238,7 +241,7 @@ export default function Home() {
     const controller = new AbortController();
     setLiveStatus(null);
     setLiveLoading(true);
-    setSearchCount((n) => n + 1);
+    setSearchStartedAt(Date.now());
     fetch("/api/plan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -701,7 +704,7 @@ export default function Home() {
               Galway the built-in venues show underneath meanwhile). After:
               away from Galway, say why if nothing came back. */}
           {liveLoading ? (
-            <LoadingBar key={searchCount} label={`Finding live places near ${location.name}…`} />
+            <LoadingBar startedAt={searchStartedAt} label={`Finding live places near ${location.name}…`} />
           ) : (
             emptyMessage && (
               <span className="text-[13px] leading-snug" style={{ color: "#767676" }}>

@@ -6,21 +6,23 @@ import { CTA_GRADIENT } from "../lib/constants";
 // Progress bar shown while live results are being found. A live search
 // takes ~50 seconds and reports no progress, so the bar eases toward (but
 // never reaches) the end on a curve tuned to that — about 60% at 20s, 90%
-// at 50s — with a shimmer so it always looks alive. Remount it (via `key`)
-// for each new search to start from zero.
+// at 50s — with a shimmer so it always looks alive.
+//
+// Progress is worked out from `startedAt` (when the search began), not
+// from when the bar appeared, so leaving and coming back — e.g. switching
+// to Explore and back to Search — carries on where it was.
 const EXPECTED_MS = 22_000; // time constant: 1 - e^(-t/τ)
 
-export function LoadingBar({ label }: { label: string }) {
-  const [progress, setProgress] = useState(4);
+const progressAt = (startedAt: number) => 4 + 92 * (1 - Math.exp(-(Date.now() - startedAt) / EXPECTED_MS));
+
+export function LoadingBar({ label, startedAt }: { label: string; startedAt: number }) {
+  const [progress, setProgress] = useState(() => progressAt(startedAt));
 
   useEffect(() => {
-    const started = Date.now();
-    const tick = window.setInterval(() => {
-      const t = Date.now() - started;
-      setProgress(4 + 92 * (1 - Math.exp(-t / EXPECTED_MS)));
-    }, 250);
+    setProgress(progressAt(startedAt));
+    const tick = window.setInterval(() => setProgress(progressAt(startedAt)), 250);
     return () => window.clearInterval(tick);
-  }, []);
+  }, [startedAt]);
 
   return (
     <div role="status" aria-live="polite" className="flex flex-col" style={{ gap: 8 }}>
