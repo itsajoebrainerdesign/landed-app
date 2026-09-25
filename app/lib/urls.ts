@@ -17,6 +17,15 @@ export function bookingSearchUrl(name: string, area?: string, website?: string) 
   return safeWebsite(website) ?? "https://www.google.com/search?q=" + encodeURIComponent(withArea(name, area) + " booking");
 }
 
+// A venue's own Google Maps page, where the person can tap Save. Google's
+// venue id (in our option ids, "g-<category>-<placeId>") makes it the
+// exact place rather than a name search.
+export function placeMapsUrl(venue: { title: string; id?: string }, area?: string) {
+  const placeId = venue.id?.match(/^g-[a-z]+-(.+)$/)?.[1];
+  if (!placeId) return mapsUrl(venue.title, area);
+  return mapsUrl(venue.title, area) + "&query_place_id=" + encodeURIComponent(placeId);
+}
+
 // Some venues list a platform's homepage (e.g. just "instagram.com")
 // rather than their page on it — useless as a link.
 const PLATFORM_HOSTS = ["instagram.com", "facebook.com", "tiktok.com", "twitter.com", "x.com", "linktr.ee", "google.com", "linkedin.com"];

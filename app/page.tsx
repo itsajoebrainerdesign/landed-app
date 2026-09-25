@@ -41,6 +41,7 @@ import { mapsUrl, ticketSearchUrl, bookingSearchUrl, stayBookingUrl, AFFILIATE_L
 import { telHref } from "./lib/format";
 import { PinIcon, PhoneIcon } from "./components/icons";
 import { VenuePhotoTile } from "./components/VenuePhotoTile";
+import { SaveInMapsLink } from "./components/SaveInMapsLink";
 import { QuickDropdown } from "./components/QuickDropdown";
 import { PlanItemCard } from "./components/PlanItemCard";
 import { SectionHeading } from "./components/SectionHeading";
@@ -1111,6 +1112,7 @@ export default function Home() {
                     <PhoneIcon />
                     <span style={{ fontSize: 12, color: "#767766" }}>{item.phone}</span>
                   </a>
+                  {bookingsConfirmed && <SaveInMapsLink venue={item} area={location.name} />}
 
                   {cat === "stay" &&
                     (item.hasApiBooking ? (

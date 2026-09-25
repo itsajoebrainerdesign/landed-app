@@ -8,6 +8,7 @@ import { formatDate } from "../lib/format";
 import type { SavedBooking } from "../lib/bookingsStore";
 import { listBookings, deleteBooking } from "../lib/bookingsStore";
 import { SwipeToRemove } from "../components/SwipeToRemove";
+import { SaveInMapsLink } from "../components/SaveInMapsLink";
 import { onAuthChange } from "../lib/accountStore";
 
 // Note: lib/categoryOptions.ts has its own, deliberately different
@@ -194,6 +195,7 @@ function ViewBookingSheet({
                   {item.tag}
                 </span>
                 <span style={{ fontWeight: 600, fontSize: 18, color: "#111111" }}>{item.title}</span>
+                <SaveInMapsLink venue={item} area={booking?.location?.name} />
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
                     <span style={{ fontWeight: 600, fontSize: 16, color: "#111111" }}>{item.price}</span>
