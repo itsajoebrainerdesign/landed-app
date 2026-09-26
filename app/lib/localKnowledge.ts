@@ -85,13 +85,14 @@ const EMPTY: Knowledge = { hygiene: [], wiki: [], osm: [], guides: [] };
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const USER_AGENT = "LandedApp/1.0 (local recommendations; contact via landed app)";
 
-type Place = { lat: number; lng: number; location: string };
+// radiusKm: how far out to look — follows the radius slider.
+type Place = { lat: number; lng: number; location: string; radiusKm: number };
 type Usage = (u: { inputTokens: number; outputTokens: number; webSearches: number; usd: number }) => void;
 
 // ── Cache (memory, then the shared plan_cache table) ─────────────────────
 
 const memory = new Map<string, { expires: number; data: Knowledge }>();
-const keyFor = (p: Place) => `lk4|${p.lat.toFixed(2)},${p.lng.toFixed(2)}`;
+const keyFor = (p: Place) => `lk5|${p.lat.toFixed(2)},${p.lng.toFixed(2)}|${Math.round(p.radiusKm)}`;
 
 async function readCache(key: string): Promise<Knowledge | null> {
   const hit = memory.get(key);
@@ -133,7 +134,7 @@ async function fetchHygiene(p: Place): Promise<Hygiene[]> {
   const pages = await Promise.all(
     FSA_TYPES.map((type) =>
       getJson(
-        `https://api.ratings.food.gov.uk/Establishments?latitude=${p.lat}&longitude=${p.lng}&maxDistanceLimit=2&businessTypeId=${type}&pageSize=500&pageNumber=1`,
+        `https://api.ratings.food.gov.uk/Establishments?latitude=${p.lat}&longitude=${p.lng}&maxDistanceLimit=${Math.max(1, Math.min(10, p.radiusKm / 1.6)).toFixed(1)}&businessTypeId=${type}&pageSize=500&pageNumber=1`,
         { headers: { "x-api-version": "2", Accept: "application/json" } }
       ).catch(() => null)
     )
@@ -156,7 +157,7 @@ async function fetchWikipedia(p: Place): Promise<WikiPlace[]> {
     action: "query",
     generator: "geosearch",
     ggscoord: `${p.lat}|${p.lng}`,
-    ggsradius: "8000",
+    ggsradius: String(Math.min(10000, Math.max(3000, Math.round(p.radiusKm * 1000 * 2)))),
     ggslimit: "40",
     prop: "extracts|info|coordinates",
     exintro: "1",
@@ -192,7 +193,7 @@ const OSM_FEATURES: [string, string, string][] = [
 ];
 
 async function fetchOsm(p: Place): Promise<OsmPlace[]> {
-  const q = `[out:json][timeout:20];nwr(around:1500,${p.lat},${p.lng})["amenity"~"^(pub|bar|restaurant|cafe|biergarten|nightclub)$"]["name"];out tags center;`;
+  const q = `[out:json][timeout:20];nwr(around:${Math.min(8000, Math.round(p.radiusKm * 1000))},${p.lat},${p.lng})["amenity"~"^(pub|bar|restaurant|cafe|biergarten|nightclub)$"]["name"];out tags center;`;
   // The public Overpass servers are free and sometimes busy (504): try the
   // main one, then a mirror.
   const post = (host: string) =>
@@ -272,7 +273,7 @@ async function scout(p: Place, apiKey: string, focus: "food" | "stays", onUsage:
     {
       role: "user",
       content:
-        `Area: ${p.location} (pin at ${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}). Venues within about 3 km of the pin only.\n` +
+        `Area: ${p.location} (pin at ${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}). Venues within about ${Math.round(p.radiusKm)} km of the pin, plus any exceptional ones a little further out.\n` +
         `Find ${what} that trusted guides list or recommend (awards, "best of" lists, guide entries), and anything they warn about.\n` +
         `You have ${SCOUT_SEARCHES} web searches in total — plan them, roughly one per source, naming the town in each (e.g. "St Albans Michelin Guide", "St Albans CAMRA Good Beer Guide"). Up to 25 findings. Then call submit_findings.`,
     },
@@ -411,6 +412,12 @@ export function signalNote(cat: CategoryKey, name: string, k: Knowledge | null, 
   const osm = k.osm.find((o) => samePlace(name, pos, o.name, o.pos, area, 150));
   if (osm) parts.push(osm.features.join(", "));
   return parts.join("; ");
+}
+
+// Whether a trusted source recommends this venue — such a place may be
+// further away than the others ("worth the trip").
+export function isGuidePick(name: string, k: Knowledge | null, area = ""): boolean {
+  return !!k?.guides.some((g) => g.tone === "good" && sameVenue(name, g.name, area));
 }
 
 // Places trusted sources recommend in this category — for the AI, in case

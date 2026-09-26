@@ -2,14 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TimeKey, VibeKey, BudgetKey } from "../../lib/constants";
-import { TIME_OPTIONS, VIBE_OPTIONS, BUDGET_OPTIONS, normalizeTravel, type TravelMode } from "../../lib/constants";
+import { TIME_OPTIONS, VIBE_OPTIONS, BUDGET_OPTIONS, RADIUS_SCALE, normalizeTravel, normalizeRadius, type TravelMode, type RadiusLevel } from "../../lib/constants";
 import type { CategoryKey, CategoryOption, VenuePhoto } from "../../lib/categoryOptions";
 import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_STYLE } from "../../lib/categoryOptions";
 import { haversineKm } from "../../lib/geo";
 import { getServerSupabase } from "../../lib/supabase/server";
 import { getAdminSupabase } from "../../lib/supabase/admin";
 import { findPartnerPages, partnerChecksSignature } from "../../lib/partnerChecks";
-import { startLocalKnowledge, badgesFor, signalNote, recommendedElsewhere, type Knowledge } from "../../lib/localKnowledge";
+import { startLocalKnowledge, badgesFor, signalNote, recommendedElsewhere, isGuidePick, type Knowledge } from "../../lib/localKnowledge";
 
 /**
  * POST /api/plan
@@ -70,7 +70,7 @@ import { startLocalKnowledge, badgesFor, signalNote, recommendedElsewhere, type 
 // Six AI calls in parallel plus Places; well under a minute, but allow slack.
 export const maxDuration = 300;
 
-type PlanRequest = { location: string; lat: number; lng: number; vibe: VibeKey; travel: TravelMode };
+type PlanRequest = { location: string; lat: number; lng: number; vibe: VibeKey; travel: TravelMode; radius: RadiusLevel };
 // Local knowledge for the search in progress (localKnowledge.ts).
 type LocalKnowledge = { fast: Promise<Knowledge>; full: Promise<Knowledge> };
 // How long a category's AI pick waits for the slow part (the guides) on an
@@ -98,10 +98,16 @@ const MAX_DISTANCE_KM: Record<CategoryKey, number> = {
   parking: 3,
   stay: 8,
 };
-// By travel mode: stations can be a little further out than car parks.
-function maxDistanceKm(cat: CategoryKey, travel: TravelMode): number {
-  if (travel === "transit" && cat === "parking") return 5;
-  return MAX_DISTANCE_KM[cat];
+// Scaled by the radius slider ("Closer" … "Worth the trip"). Stations can
+// be a little further out than car parks. Google Nearby Search caps a
+// circle at 50km.
+function maxDistanceKm(cat: CategoryKey, input: PlanRequest): number {
+  const base = input.travel === "transit" && cat === "parking" ? 5 : MAX_DISTANCE_KM[cat];
+  return Math.min(50, base * RADIUS_SCALE[input.radius]);
+}
+// A trusted guide's pick may be further than that: worth the trip.
+function worthTheTripKm(cat: CategoryKey, input: PlanRequest): number {
+  return Math.min(50, Math.max(maxDistanceKm(cat, input) * 2, 15));
 }
 
 // Which Claude model picks the venues for each category. Every category
@@ -137,6 +143,7 @@ const MODEL_SETUP: Record<
   "claude-haiku-4-5": { adaptiveThinking: false, effort: false, refusalFallback: false, webSearch: "web_search_20250305", usdPerMInput: 1, usdPerMOutput: 5 },
 };
 const USD_PER_WEB_SEARCH = 0.01;
+const RADIUS_LABEL: Record<RadiusLevel, string> = { 1: "closer: walking distance", 2: "nearby", 3: "local", 4: "wider area", 5: "worth the trip" };
 // Google Places Nearby / Text Search with Enterprise-tier fields (rating,
 // phone, opening hours), list price before the monthly free allowance.
 const USD_PER_PLACES_REQUEST = 0.035;
@@ -206,6 +213,7 @@ function parseRequest(body: unknown): PlanRequest | string {
     lng,
     vibe: vibe as VibeKey,
     travel: normalizeTravel((body as Record<string, unknown>).travel),
+    radius: normalizeRadius((body as Record<string, unknown>).radius, normalizeTravel((body as Record<string, unknown>).travel)),
   };
 }
 
@@ -418,7 +426,7 @@ function localDate(lng: number): string {
 }
 
 function cacheKey(input: PlanRequest): string {
-  return `v10${partnerChecksSignature()}|${input.lat.toFixed(2)},${input.lng.toFixed(2)}|${input.vibe}|${input.travel}|${localDate(input.lng)}`;
+  return `v11${partnerChecksSignature()}|${input.lat.toFixed(2)},${input.lng.toFixed(2)}|${input.vibe}|${input.travel}|r${input.radius}|${localDate(input.lng)}`;
 }
 
 function readMemoryCache(key: string): PlanData | null {
@@ -587,7 +595,7 @@ async function buildPlan(input: PlanRequest, emit: Emit): Promise<BuildResult> {
   //    same time.
   const usage = newUsage();
   const local: LocalKnowledge | null = anthropicKey
-    ? startLocalKnowledge({ lat: input.lat, lng: input.lng, location: input.location }, anthropicKey, (u) => {
+    ? startLocalKnowledge({ lat: input.lat, lng: input.lng, location: input.location, radiusKm: Math.min(25, 3 * RADIUS_SCALE[input.radius]) }, anthropicKey, (u) => {
         usage.inputTokens += u.inputTokens;
         usage.outputTokens += u.outputTokens;
         usage.webSearches += u.webSearches;
@@ -710,7 +718,7 @@ async function searchCategory(
   const knowledge = local ? await localFor(local) : null;
   const candidates = await findCandidatesForCategory(cat, input, anthropicKey, lists[cat] ?? [], warnings, usage, knowledge);
   if (candidates.length === 0) return null;
-  const verified = await verifyWithGooglePlaces(candidates, input, placesKey, warnings, lists, usage);
+  const verified = await verifyWithGooglePlaces(candidates, input, placesKey, warnings, lists, usage, knowledge);
   if (verified.length === 0) return null;
   return assemble(verified, input, knowledge);
 }
@@ -795,7 +803,9 @@ Guidance:
 - Choose from the Google Maps list in the request wherever it fits, using names exactly as written — those places are real, open and near the pin. Closer is better among good options. Only add a place that isn't listed if the list has nothing suitable.
 - Only choose venues that suit the requested vibe.
 - price_gbp is your best current estimate, in British pounds (convert local prices if needed); the list's £–££££ is Google's price level. The app labels prices as estimates.
+- Distance: stay within the search radius. On the closer settings, closer first among good options; on "wider area" and "worth the trip", don't favour closeness — choose the best places in the whole radius. The exception is a place trusted guides recommend (Michelin, Good Food Guide, Good Beer Guide…) further out — include one if it's genuinely special, and put how far it is in "highlight" (e.g. "15 min drive, Michelin", "2 stops by train").
 - Local knowledge (when shown) is what trusted guides (Michelin, Good Food Guide, Time Out, CAMRA…), Wikipedia and official food hygiene ratings say. It's the most honest signal you have: favour venues it recommends, take any WARNING seriously, and avoid food hygiene ratings of 0–2 unless nothing else suits.
+- Never claim an award, a guide listing or a Michelin mention in "highlight" unless the local knowledge shown says so.
 - Keep "highlight" short.
 - When you've chosen, call submit_venues once. Don't write a prose answer.`;
 
@@ -835,7 +845,8 @@ async function findCandidatesForCategory(
         // The pin's time zone isn't known here, so give the exact UTC
         // instant and let the model work out local time for the location.
         `Current time: ${new Date().toISOString()} UTC — use the pin's local time for now / tonight / tomorrow.\n` +
-        `Vibe: ${vibeLabel} (${input.vibe}).\n\n` +
+        `Vibe: ${vibeLabel} (${input.vibe}).\n` +
+        `Travelling by ${input.travel === "transit" ? "public transport" : "car"}. Search radius (level ${input.radius} of 5): up to about ${maxDistanceKm(cat, input).toFixed(0)} km (${RADIUS_LABEL[input.radius]}); a place trusted guides recommend may be up to ${worthTheTripKm(cat, input).toFixed(0)} km if it's genuinely worth the trip.\n\n` +
         (list.length
           ? `Near the pin, from Google Maps (closest first; ★rating (reviews); £–££££ price level):\n` +
             list.map((p) => {
@@ -1109,7 +1120,12 @@ function distanceFrom(input: PlanRequest, p: Place): number {
 }
 
 // The nearby lists that depend on how they're travelling.
-function nearbyQueriesFor(cat: CategoryKey, travel: TravelMode): NearbyQuery[] {
+function nearbyQueriesFor(cat: CategoryKey, input: PlanRequest): NearbyQuery[] {
+  // Each query's circle grows or shrinks with the radius slider.
+  const scale = RADIUS_SCALE[input.radius];
+  return baseQueriesFor(cat, input.travel).map((q) => ({ ...q, radiusKm: Math.min(50, q.radiusKm * scale) }));
+}
+function baseQueriesFor(cat: CategoryKey, travel: TravelMode): NearbyQuery[] {
   if (cat === "parking" && travel === "transit") {
     // Separately, so the many bus stops Google files as "bus_station"
     // can't crowd out the train station (capped in listCategory).
@@ -1153,8 +1169,8 @@ async function nearbySearch(q: NearbyQuery, radiusKm: number, input: PlanRequest
 }
 
 async function listCategory(cat: CategoryKey, input: PlanRequest, apiKey: string, usage: SearchUsage): Promise<NearbyPlace[]> {
-  const queries = nearbyQueriesFor(cat, input.travel);
-  const maxKm = maxDistanceKm(cat, input.travel);
+  const queries = nearbyQueriesFor(cat, input);
+  const maxKm = maxDistanceKm(cat, input);
   const count = () => {
     usage.placesRequests++;
     usage.usd += USD_PER_PLACES_REQUEST;
@@ -1263,7 +1279,8 @@ async function verifyWithGooglePlaces(
   apiKey: string,
   warnings: string[],
   nearbyLists: NearbyLists = {},
-  usage?: SearchUsage
+  usage?: SearchUsage,
+  knowledge: Knowledge | null = null
 ): Promise<Verified[]> {
   const results = await Promise.allSettled(
     candidates.map((c) => {
@@ -1294,7 +1311,11 @@ async function verifyWithGooglePlaces(
     const typeCheck = typeCheckFor(candidates[i].category, input.travel);
     if (typeCheck && !typeCheck(place.types ?? [])) return;
     const distanceKm = haversineKm({ lat: input.lat, lng: input.lng }, { lat: place.location.latitude, lng: place.location.longitude });
-    if (distanceKm > maxDistanceKm(candidates[i].category, input.travel)) return;
+    // A trusted guide's pick can be further: worth the trip.
+    const limit = isGuidePick(place.displayName.text, knowledge, input.location)
+      ? worthTheTripKm(candidates[i].category, input)
+      : maxDistanceKm(candidates[i].category, input);
+    if (distanceKm > limit) return;
     verified.push({ candidate: candidates[i], place, distanceKm });
   });
   if (failures > 0) {

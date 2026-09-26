@@ -37,6 +37,20 @@ export function normalizeTravel(t: unknown): TravelMode {
   return t === "transit" ? t : DEFAULT_TRAVEL;
 }
 
+// How far the search reaches, from "Closer" (1) to "Worth the trip" (5):
+// a multiplier on each category's normal distance (restaurants and bars
+// ~3km, attractions and live ~5km, stays ~8km at level 2). Whole steps, so
+// results cache per level. Public transport starts closer, a car a little
+// wider, until the person moves the slider themselves.
+export type RadiusLevel = 1 | 2 | 3 | 4 | 5;
+export const RADIUS_SCALE: Record<RadiusLevel, number> = { 1: 0.5, 2: 1, 3: 1.6, 4: 2.5, 5: 4 };
+export function defaultRadius(travel: TravelMode): RadiusLevel {
+  return travel === "transit" ? 2 : 3;
+}
+export function normalizeRadius(r: unknown, travel: TravelMode = DEFAULT_TRAVEL): RadiusLevel {
+  return r === 1 || r === 2 || r === 3 || r === 4 || r === 5 ? r : defaultRadius(travel);
+}
+
 export const BUDGET_OPTIONS: { key: BudgetKey; label: string }[] = [
   { key: "modest", label: "Modest" },
   { key: "luxury", label: "Luxury" },

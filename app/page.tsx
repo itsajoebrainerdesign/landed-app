@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { TimeKey, VibeKey, BudgetKey, TravelMode } from "./lib/constants";
-import { TIME_OPTIONS, VIBE_OPTIONS, BUDGET_OPTIONS, TRAVEL_OPTIONS, DEFAULT_TRAVEL, CTA_GRADIENT, normalizeBudget, normalizeTravel } from "./lib/constants";
+import type { TimeKey, VibeKey, BudgetKey, TravelMode, RadiusLevel } from "./lib/constants";
+import { TIME_OPTIONS, VIBE_OPTIONS, BUDGET_OPTIONS, TRAVEL_OPTIONS, DEFAULT_TRAVEL, RADIUS_SCALE, CTA_GRADIENT, normalizeBudget, normalizeTravel, defaultRadius } from "./lib/constants";
 import type { CategoryKey, CategoryOption, Catalog } from "./lib/categoryOptions";
 
 // /api/plan's results: per timeframe, per category.
@@ -86,6 +86,17 @@ export default function Home() {
   // How they're travelling — chosen under the map before confirming, so
   // the search only looks for what's relevant (see TRAVEL_OPTIONS).
   const [travel, setTravel] = useState<TravelMode>(DEFAULT_TRAVEL);
+  // How far the search reaches: the slider under the dropdowns, from
+  // "Closer" (1) to "Worth the trip" (5). It follows the travel mode until
+  // the person moves it; the search uses it once they stop dragging.
+  const [reach, setReach] = useState<RadiusLevel>(defaultRadius(DEFAULT_TRAVEL));
+  const [searchReach, setSearchReach] = useState<RadiusLevel>(defaultRadius(DEFAULT_TRAVEL));
+  const reachTouchedRef = useRef(false);
+  useEffect(() => {
+    if (reach === searchReach) return;
+    const t = window.setTimeout(() => setSearchReach(reach), 700);
+    return () => window.clearTimeout(t);
+  }, [reach, searchReach]);
   const [budget, setBudget] = useState<BudgetKey>("modest");
   const [bookingOpen, setBookingOpen] = useState(false);
   const [bookingsConfirmed, setBookingsConfirmed] = useState(false);
@@ -205,7 +216,7 @@ export default function Home() {
   // so going back to a place/vibe — or opening a saved plan that carries
   // its results — never searches again.
   const resultsCacheRef = useRef(new Map<string, LiveResults>());
-  const resultsKey = (p: { lat: number; lng: number }, v: VibeKey, t: TravelMode) => `${p.lat.toFixed(3)},${p.lng.toFixed(3)}|${v}|${t}`;
+  const resultsKey = (p: { lat: number; lng: number }, v: VibeKey, t: TravelMode, r: RadiusLevel) => `${p.lat.toFixed(3)},${p.lng.toFixed(3)}|${v}|${t}|${r}`;
 
   // Opening a saved plan (?load=…): the plan brings its own place, so the
   // map mustn't jump to the device location on its own — that would
@@ -235,6 +246,17 @@ export default function Home() {
     engagedRef.current = true;
     manualPicksRef.current = false;
     setTravel(next);
+    // The radius follows the travel mode until they've set it themselves.
+    if (!reachTouchedRef.current) {
+      setReach(defaultRadius(next));
+      setSearchReach(defaultRadius(next));
+    }
+  }
+  function selectReach(next: RadiusLevel) {
+    reachTouchedRef.current = true;
+    engagedRef.current = true;
+    manualPicksRef.current = false;
+    setReach(next);
   }
   function selectBudget(next: BudgetKey) {
     engagedRef.current = true;
@@ -291,7 +313,7 @@ export default function Home() {
     // Nothing is shown until a location is chosen, so don't spend a live
     // search (or the user's allowance) on the default before then.
     if (!locationChosen) return;
-    const cacheKey = resultsKey(location, vibe, travel);
+    const cacheKey = resultsKey(location, vibe, travel, searchReach);
     const cached = resultsCacheRef.current.get(cacheKey);
     if (cached) {
       // Already have results for this place and vibe — no new search.
@@ -350,7 +372,7 @@ export default function Home() {
     fetch("/api/plan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ location: location.label, lat: location.lat, lng: location.lng, vibe, travel }),
+      body: JSON.stringify({ location: location.label, lat: location.lat, lng: location.lng, vibe, travel, radius: searchReach }),
       signal: controller.signal,
     })
       .then(async (res) => {
@@ -388,7 +410,7 @@ export default function Home() {
         }
       });
     return () => controller.abort();
-  }, [vibe, travel, location, locationChosen]);
+  }, [vibe, travel, searchReach, location, locationChosen]);
 
   // Until a location is chosen, the page stops at the map: Your Plan and
   // Explore aren't rendered and the page can't scroll, so the first step
@@ -538,7 +560,11 @@ export default function Home() {
         Object.values(restored).forEach((byCat) =>
           Object.values(byCat ?? {}).forEach((opts) => opts?.forEach((o) => knownOptionsRef.current.set(o.id, o)))
         );
-        if (found.location) resultsCacheRef.current.set(resultsKey(found.location, found.vibe as VibeKey, normalizeTravel(found.travel)), restored);
+        const foundTravel = normalizeTravel(found.travel);
+        if (found.location) resultsCacheRef.current.set(resultsKey(found.location, found.vibe as VibeKey, foundTravel, defaultRadius(foundTravel)), restored);
+        reachTouchedRef.current = false;
+        setReach(defaultRadius(foundTravel));
+        setSearchReach(defaultRadius(foundTravel));
         setLocationChosen(true);
         manualPicksRef.current = true;
         rememberSavedItems(found.items);
@@ -877,6 +903,59 @@ export default function Home() {
               setOpenMenu(null);
             }}
           />
+        </div>
+
+        {/* How far to look: closer for a walkable plan, wider to include
+            places worth the trip. A new search runs when they let go. */}
+        <div className="flex flex-col gap-1.5" style={{ marginTop: -8 }}>
+          <style>{`
+            .landed-reach-slider {
+              -webkit-appearance: none;
+              appearance: none;
+              width: 100%;
+              height: 10px;
+              border-radius: 999px;
+              outline: none;
+              cursor: pointer;
+              background: linear-gradient(to right, var(--accent) 0%, var(--accent-light) ${((reach - 1) / 4) * 100}%, #EAE7DF ${((reach - 1) / 4) * 100}%, #EAE7DF 100%);
+            }
+            .landed-reach-slider::-webkit-slider-thumb {
+              -webkit-appearance: none;
+              width: 24px;
+              height: 24px;
+              border-radius: 50%;
+              background: #FFFFFF;
+              border: 2px solid #111111;
+              box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+              cursor: pointer;
+            }
+            .landed-reach-slider::-moz-range-thumb {
+              width: 24px;
+              height: 24px;
+              border-radius: 50%;
+              background: #FFFFFF;
+              border: 2px solid #111111;
+              cursor: pointer;
+            }
+            .landed-reach-slider:focus-visible { box-shadow: 0 0 0 3px var(--accent-light); }
+          `}</style>
+          <input
+            id="search-reach"
+            type="range"
+            className="landed-reach-slider"
+            min={1}
+            max={5}
+            step={1}
+            value={reach}
+            onChange={(e) => selectReach(Number(e.target.value) as RadiusLevel)}
+            aria-label="How far to search"
+            aria-valuetext={`${reach === 1 ? "Closer" : reach === 5 ? "Worth the trip" : "In between"}: food and drink within about ${Math.round(3 * RADIUS_SCALE[reach])} km`}
+          />
+          <div className="flex items-center justify-between" style={{ fontSize: 11, color: "#767766" }}>
+            <span style={{ fontWeight: reach === 1 ? 700 : 500, color: reach === 1 ? "#111111" : undefined }}>Closer</span>
+            <span>Food &amp; drink within ~{Math.round(3 * RADIUS_SCALE[reach])} km</span>
+            <span style={{ fontWeight: reach === 5 ? 700 : 500, color: reach === 5 ? "#111111" : undefined }}>Worth the trip</span>
+          </div>
         </div>
 
         <div className="flex flex-col gap-3.5">
