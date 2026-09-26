@@ -907,7 +907,7 @@ export default function Home() {
 
         {/* How far to look: closer for a walkable plan, wider to include
             places worth the trip. A new search runs when they let go. */}
-        <div className="flex flex-col gap-1.5" style={{ marginTop: -8 }}>
+        <div className="flex flex-col gap-1.5" style={{ margin: "-4px 0 10px" }}>
           <style>{`
             .landed-reach-slider {
               -webkit-appearance: none;
