@@ -591,11 +591,12 @@ async function buildPlan(input: PlanRequest, emit: Emit): Promise<BuildResult> {
   }
 
   // 1) What's actually near the pin, from Google → the instant draft.
-  //    Local knowledge (guides, Reddit, hygiene…) starts gathering at the
-  //    same time.
+  //    Local knowledge (guides, regional media, local blogs, hygiene…)
+  //    starts gathering at the same time — one scout for the closer radius
+  //    settings (5km) and one for the wider ones (12km), each cached a week.
   const usage = newUsage();
   const local: LocalKnowledge | null = anthropicKey
-    ? startLocalKnowledge({ lat: input.lat, lng: input.lng, location: input.location, radiusKm: Math.min(25, 3 * RADIUS_SCALE[input.radius]) }, anthropicKey, (u) => {
+    ? startLocalKnowledge({ lat: input.lat, lng: input.lng, location: input.location, radiusKm: input.radius <= 3 ? 5 : 12 }, anthropicKey, (u) => {
         usage.inputTokens += u.inputTokens;
         usage.outputTokens += u.outputTokens;
         usage.webSearches += u.webSearches;

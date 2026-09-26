@@ -92,7 +92,7 @@ type Usage = (u: { inputTokens: number; outputTokens: number; webSearches: numbe
 // ── Cache (memory, then the shared plan_cache table) ─────────────────────
 
 const memory = new Map<string, { expires: number; data: Knowledge }>();
-const keyFor = (p: Place) => `lk5|${p.lat.toFixed(2)},${p.lng.toFixed(2)}|${Math.round(p.radiusKm)}`;
+const keyFor = (p: Place) => `lk6|${p.lat.toFixed(2)},${p.lng.toFixed(2)}|${Math.round(p.radiusKm)}`;
 
 async function readCache(key: string): Promise<Knowledge | null> {
   const hit = memory.get(key);
@@ -193,7 +193,7 @@ const OSM_FEATURES: [string, string, string][] = [
 ];
 
 async function fetchOsm(p: Place): Promise<OsmPlace[]> {
-  const q = `[out:json][timeout:20];nwr(around:${Math.min(8000, Math.round(p.radiusKm * 1000))},${p.lat},${p.lng})["amenity"~"^(pub|bar|restaurant|cafe|biergarten|nightclub)$"]["name"];out tags center;`;
+  const q = `[out:json][timeout:20];nwr(around:${Math.min(2000, Math.round(p.radiusKm * 1000))},${p.lat},${p.lng})["amenity"~"^(pub|bar|restaurant|cafe|biergarten|nightclub)$"]["name"];out tags center;`;
   // The public Overpass servers are free and sometimes busy (504): try the
   // main one, then a mirror.
   const post = (host: string) =>
@@ -213,19 +213,70 @@ async function fetchOsm(p: Place): Promise<OsmPlace[]> {
     .filter((o) => o.name && o.features.length);
 }
 
-// ── Local scout: trusted guides, via web search ──────────────────────────
+// ── Local scout: trusted guides, regional media, local voices ───────────
+//
+// Several searches run in parallel, each an AI call with web search:
+// - food & drink: national guides and awards
+// - stays & attractions: hotel guides, heritage, the unusual
+// - regional: the area's own what's-on and food media, when the pin is in
+//   a region we know (London, the North West, the Midlands, Yorkshire,
+//   Nottingham, Bristol and the South West, Scotland)
+// - local voices: independent local blogs and Substack newsletters,
+//   searched across the web (big aggregators excluded)
 
 const FOOD_DRINK_SOURCES = [
   "guide.michelin.com", "thegoodfoodguide.co.uk", "hardens.com", "hot-dinners.com", "theinfatuation.com",
   "squaremeal.co.uk", "timeout.com", "whatpub.com", "camra.org.uk", "top50gastropubs.com", "theworlds50best.com",
   "ra.co",
+  // Awards and "best of" lists
+  "nationalrestaurantawards.co.uk", "theaa.com", "thegoodpubguide.co.uk", "theguardian.com",
 ];
-// Not searchable this way: reddit.com and eater.com block the search
-// crawler (the request fails outright). Reddit needs its own API.
 const STAY_SEE_SOURCES = [
   "guide.michelin.com", "mrandmrssmith.com", "sawdays.co.uk", "goodhotelguide.com", "timeout.com",
   "atlasobscura.com", "nationaltrust.org.uk", "english-heritage.org.uk",
+  // Awards and "best of" lists
+  "thetimes.com", "telegraph.co.uk", "cntraveller.com", "visitengland.com", "secretescapes.com",
 ];
+
+// Regional media, by a rough box around each region.
+type Region = { name: string; box: [number, number, number, number]; domains: string[] }; // [minLat, maxLat, minLng, maxLng]
+const REGIONS: Region[] = [
+  { name: "London", box: [51.28, 51.7, -0.52, 0.34], domains: ["secretldn.com", "londonist.com", "thenudge.com", "standard.co.uk", "hot-dinners.com", "timeout.com"] },
+  { name: "Manchester and the North West", box: [53.2, 54.1, -3.2, -1.9], domains: ["themanc.com", "manchestersfinest.com", "confidentials.com", "ilovemanchester.com", "secretmanchester.com", "manchestereveningnews.co.uk", "liverpoolecho.co.uk"] },
+  { name: "Birmingham and the Midlands", box: [52.2, 52.85, -2.35, -1.3], domains: ["confidentials.com", "birminghammail.co.uk", "brumhour.co.uk", "secretbirmingham.com"] },
+  { name: "Leeds and Yorkshire", box: [53.35, 54.3, -2.1, -0.9], domains: ["leedslist.com", "yorkshireeveningpost.co.uk", "yorkshirepost.co.uk", "secretleeds.com", "confidentials.com"] },
+  { name: "Nottingham", box: [52.85, 53.1, -1.35, -1.0], domains: ["leftlion.co.uk", "nottinghampost.com"] },
+  { name: "Bristol and the South West", box: [51.25, 51.65, -2.85, -2.35], domains: ["bristol247.com", "secretbristol.com", "bristolpost.co.uk"] },
+  { name: "Scotland", box: [54.6, 60.9, -8.0, -0.7], domains: ["list.co.uk", "edinburghnews.scotsman.com", "glasgowlive.co.uk", "secretedinburgh.com", "secretglasgow.com"] },
+];
+function regionFor(p: Place): Region | null {
+  return REGIONS.find(({ box: [a, b, c, d] }) => p.lat >= a && p.lat <= b && p.lng >= c && p.lng <= d) ?? null;
+}
+
+// Local voices: anywhere on the web except the big aggregators and sites
+// that aren't a local person's own view.
+const NOT_LOCAL_VOICES = [
+  "tripadvisor.com", "tripadvisor.co.uk", "yelp.com", "yelp.co.uk", "google.com", "facebook.com", "instagram.com", "tiktok.com",
+  "booking.com", "expedia.co.uk", "hotels.com", "opentable.co.uk", "thefork.co.uk", "designmynight.com", "ubereats.com",
+  "deliveroo.co.uk", "just-eat.co.uk", "wikipedia.org", "reddit.com",
+];
+
+// Sites the search tool can't read (they block its crawler) — naming one
+// in allowed_domains fails the whole request, so they're dropped and
+// remembered here once seen.
+const BLOCKED = new Set<string>([
+  "reddit.com", "eater.com", "theguardian.com", "thetimes.com", "telegraph.co.uk", "cntraveller.com",
+  "manchestereveningnews.co.uk", "liverpoolecho.co.uk",
+]);
+
+type ScoutSpec = {
+  name: string;
+  what: string;
+  sources: string; // how to describe where to look, in the prompt
+  allowed?: string[];
+  blocked?: string[];
+  labels: string; // example badges
+};
 
 const FINDINGS_TOOL: Anthropic.Beta.BetaTool = {
   name: "submit_findings",
@@ -245,8 +296,8 @@ const FINDINGS_TOOL: Anthropic.Beta.BetaTool = {
           properties: {
             name: { type: "string", description: "One real venue's own name, as the source gives it. Never a list, an article title or a description." },
             category: { type: "string", enum: ["stay", "restaurant", "attractions", "bar", "live"] },
-            source: { type: "string", description: "The source's name, e.g. 'Michelin Guide', 'Time Out', 'CAMRA'." },
-            label: { type: "string", description: "A short badge, 2-5 words: 'Michelin Bib Gourmand', 'Good Food Guide', 'CAMRA Good Beer Guide', 'Time Out pick', 'Atlas Obscura'." },
+            source: { type: "string", description: "The source's name, e.g. 'Michelin Guide', 'Time Out', 'The Manc', or a blog or newsletter's name." },
+            label: { type: "string", description: "A short badge, 2-5 words." },
             url: { type: "string", description: "The exact page you found it on." },
             note: { type: "string", description: "Up to 12 words, your own paraphrase of what they say. No quotes." },
             tone: { type: "string", enum: ["good", "warn"], description: "warn only for a clear warning: closed, gone downhill, poor recent experiences." },
@@ -261,37 +312,89 @@ const FINDINGS_TOOL: Anthropic.Beta.BetaTool = {
 // once it's used up every further search fails, so it's told its budget.
 const SCOUT_SEARCHES = 10;
 
-async function scout(p: Place, apiKey: string, focus: "food" | "stays", onUsage: Usage): Promise<GuideFinding[]> {
+function scoutSpecs(p: Place): ScoutSpec[] {
+  const specs: ScoutSpec[] = [
+    {
+      name: "food",
+      what: "restaurants, pubs, bars, cocktail bars, nightlife and live music or comedy venues",
+      sources: "trusted guides and awards (Michelin, Good Food Guide, Harden's, CAMRA Good Beer Guide, Good Pub Guide, National Restaurant Awards, AA Rosettes, Observer Food Monthly awards, Time Out)",
+      allowed: FOOD_DRINK_SOURCES,
+      labels: "'Michelin Bib Gourmand', 'Good Food Guide', 'CAMRA Good Beer Guide', 'AA Rosette', 'National Restaurant Awards'",
+    },
+    {
+      name: "stays",
+      what: "hotels, inns and B&Bs, and attractions (museums, landmarks, historic sites, unusual or hidden places)",
+      sources: "trusted hotel guides and awards (Michelin Keys, Mr & Mrs Smith, Sawday's, Good Hotel Guide, Sunday Times best places to stay, Condé Nast Traveller, Secret Escapes) and heritage and curiosity guides (Atlas Obscura, National Trust, English Heritage, VisitEngland awards)",
+      allowed: STAY_SEE_SOURCES,
+      labels: "'Good Hotel Guide', 'Sunday Times best places to stay', 'Atlas Obscura', 'English Heritage'",
+    },
+    {
+      name: "local voices",
+      what: "restaurants, cafés, pubs, bars, nightlife, stays and things to do",
+      sources:
+        "independent local voices: local food and lifestyle blogs and Substack newsletters written by people who live there. Only use a blog or newsletter with a named local author and posts from the last three years — skip SEO listicles, chains, tourism sites and aggregators. Search e.g. '<town> food blog', '<town> substack', 'best independent <town>'",
+      blocked: NOT_LOCAL_VOICES,
+      labels: "'Local blog: Eat St Albans', 'Newsletter: The Herts Table'",
+    },
+  ];
+  const region = regionFor(p);
+  if (region) {
+    specs.push({
+      name: `regional (${region.name})`,
+      what: "restaurants, cafés, pubs, bars, nightlife, live venues and things to do",
+      sources: `${region.name}'s own what's-on and food media`,
+      allowed: region.domains,
+      labels: "'The Manc pick', 'Secret London', 'Confidentials review'",
+    });
+  }
+  return specs;
+}
+
+async function scout(p: Place, apiKey: string, spec: ScoutSpec, onUsage: Usage): Promise<GuideFinding[]> {
   const client = new Anthropic({ apiKey, timeout: 90_000, maxRetries: 1 });
-  const domains = focus === "food" ? FOOD_DRINK_SOURCES : STAY_SEE_SOURCES;
-  const what =
-    focus === "food"
-      ? "restaurants, pubs, bars, cocktail bars, nightlife and live music or comedy venues"
-      : "hotels, inns and B&Bs, and attractions (museums, landmarks, historic sites, unusual or hidden places)";
-  const system = `You gather honest local knowledge for Landed, an app that plans a night or day out around a pin on a map. You search trusted guides and locals' discussions and report which specific venues near the pin they recommend — or warn about. Report only venues you actually found in search results, with the page URL. Never invent a listing or an award. Paraphrase briefly; don't quote.`;
+  let allowed = spec.allowed?.filter((d) => !BLOCKED.has(d));
+  const system = `You gather honest local knowledge for Landed, an app that plans a night or day out around a pin on a map. You search trusted guides and local voices and report which specific venues near the pin they recommend — or warn about. Report only venues you actually found in search results, with the page URL. Never invent a listing or an award. Paraphrase briefly; don't quote.`;
   const messages: Anthropic.Beta.BetaMessageParam[] = [
     {
       role: "user",
       content:
         `Area: ${p.location} (pin at ${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}). Venues within about ${Math.round(p.radiusKm)} km of the pin, plus any exceptional ones a little further out.\n` +
-        `Find ${what} that trusted guides list or recommend (awards, "best of" lists, guide entries), and anything they warn about.\n` +
-        `You have ${SCOUT_SEARCHES} web searches in total — plan them, roughly one per source, naming the town in each (e.g. "St Albans Michelin Guide", "St Albans CAMRA Good Beer Guide"). Up to 25 findings. Then call submit_findings.`,
+        `Find ${spec.what} that ${spec.sources} recommend, and anything they warn about. Badges look like ${spec.labels}.\n` +
+        `You have ${SCOUT_SEARCHES} web searches in total — plan them, naming the town in each. Up to 25 findings. Then call submit_findings.`,
     },
   ];
-  const tools: Anthropic.Beta.BetaToolUnion[] = [
-    { type: "web_search_20260209", name: "web_search", max_uses: SCOUT_SEARCHES, allowed_domains: domains } as Anthropic.Beta.BetaToolUnion,
-    FINDINGS_TOOL,
-  ];
-  for (let i = 0; i < 5; i++) {
-    const res = await client.beta.messages.create({
-      model: "claude-sonnet-5",
-      max_tokens: 8000,
-      thinking: { type: "adaptive" },
-      output_config: { effort: "low" },
-      system,
-      tools,
-      messages,
-    });
+  const webSearch = () =>
+    ({
+      type: "web_search_20260209",
+      name: "web_search",
+      max_uses: SCOUT_SEARCHES,
+      ...(allowed ? { allowed_domains: allowed } : {}),
+      ...(spec.blocked ? { blocked_domains: spec.blocked } : {}),
+    }) as Anthropic.Beta.BetaToolUnion;
+  for (let i = 0; i < 6; i++) {
+    let res: Anthropic.Beta.BetaMessage;
+    try {
+      res = await client.beta.messages.create({
+        model: "claude-sonnet-5",
+        max_tokens: 8000,
+        thinking: { type: "adaptive" },
+        output_config: { effort: "low" },
+        system,
+        tools: [webSearch(), FINDINGS_TOOL],
+        messages,
+      });
+    } catch (err) {
+      // A site that blocks the search crawler: drop it and try again.
+      const m = String((err as Error)?.message ?? "").match(/not accessible to our user agent: \[([^\]]*)\]/);
+      if (m && allowed) {
+        const bad = [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
+        bad.forEach((d) => BLOCKED.add(d));
+        console.warn(`[local] scout (${spec.name}): dropped sites that block search: ${bad.join(", ")}`);
+        allowed = allowed.filter((d) => !bad.includes(d));
+        if (allowed.length) continue;
+      }
+      throw err;
+    }
     const searches = res.usage.server_tool_use?.web_search_requests ?? 0;
     onUsage({
       inputTokens: res.usage.input_tokens,
@@ -312,27 +415,33 @@ async function scout(p: Place, apiKey: string, focus: "food" | "stays", onUsage:
     const submit = res.content.find((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use" && b.name === FINDINGS_TOOL.name);
     if (submit) {
       const findings = (submit.input as { findings?: GuideFinding[] }).findings ?? [];
-      const kept = findings.filter(
-        (f) =>
-          f.name &&
-          f.url &&
-          /^https:\/\//.test(f.url) &&
-          domains.some((d) => new URL(f.url).hostname.endsWith(d)) &&
+      const kept = findings.filter((f) => {
+        if (!f.name || !f.url || !/^https:\/\//.test(f.url)) return false;
+        let host: string;
+        try {
+          host = new URL(f.url).hostname;
+        } catch {
+          return false;
+        }
+        return (
+          // From where it was meant to look.
+          (allowed ? allowed.some((d) => host.endsWith(d)) : !(spec.blocked ?? []).some((d) => host.endsWith(d))) &&
           // A list or a description rather than a venue.
           !/^(restaurants|pubs|bars|hotels|things to do|best)\b|\b(restaurants|pubs|bars|hotels|listings)$|\(|survey|outfit/i.test(f.name) &&
           // CAMRA's database lists every pub and Resident Advisor every club:
           // only the Good Beer Guide, an award or "best of", or a warning
           // (e.g. closed) is worth anything from them.
-          (!/camra\.org\.uk|whatpub\.com|ra\.co/.test(f.url) || f.tone === "warn" || /good beer guide|of the year|award|best|top/i.test(`${f.label} ${f.note}`))
-      );
-      console.info(`[local] scout (${focus}): ${findings.length} found, ${kept.length} kept`);
+          (!/camra\.org\.uk|whatpub\.com|ra\.co/.test(host) || f.tone === "warn" || /good beer guide|of the year|award|best|top/i.test(`${f.label} ${f.note}`))
+        );
+      });
+      console.info(`[local] scout (${spec.name}): ${findings.length} found, ${kept.length} kept`);
       return kept;
     }
     messages.push({ role: "assistant", content: res.content });
     if (res.stop_reason === "pause_turn") continue;
     messages.push({ role: "user", content: "Please call submit_findings now." });
   }
-  console.warn(`[local] scout (${focus}): never submitted findings`);
+  console.warn(`[local] scout (${spec.name}): never submitted findings`);
   return [];
 }
 
@@ -355,16 +464,15 @@ export function startLocalKnowledge(p: Place, anthropicKey: string, onUsage: Usa
   });
   const full = cached.then(async (hit) => {
     if (hit) return hit;
-    const [base, food, stays] = await Promise.all([
+    const [base, ...scouts] = await Promise.all([
       fast,
-      scout(p, anthropicKey, "food", onUsage).catch((err) => (console.warn("[local] scout (food) failed", err), null)),
-      scout(p, anthropicKey, "stays", onUsage).catch((err) => (console.warn("[local] scout (stays) failed", err), null)),
+      ...scoutSpecs(p).map((spec) => scout(p, anthropicKey, spec, onUsage).catch((err) => (console.warn(`[local] scout (${spec.name}) failed`, err), null))),
     ]);
-    const knowledge = { ...base, guides: [...(food ?? []), ...(stays ?? [])] };
+    const knowledge = { ...base, guides: scouts.flatMap((f) => f ?? []) };
     console.info(`[local] ${p.location}: ${knowledge.hygiene.length} hygiene, ${knowledge.wiki.length} wikipedia, ${knowledge.osm.length} osm, ${knowledge.guides.length} guide findings`);
     // Kept for a week only when the scout worked and found something — a
     // failed or empty scout is retried next time rather than cached.
-    if (food && stays && food.length + stays.length > 0) void writeCache(key, knowledge);
+    if (scouts.every((f) => f !== null) && knowledge.guides.length > 0) void writeCache(key, knowledge);
     return knowledge;
   });
   return { fast, full };
