@@ -18,6 +18,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { CategoryKey, Badge } from "./categoryOptions";
 import { getAdminSupabase } from "./supabase/admin";
+import { instagramFindings, INSTAGRAM_ON } from "./instagram";
 // Matching a source's name for a venue to Google's: brackets, generic
 // words ("Inn", "Pub", "Hotel"…) and the town's own name are ignored, so
 // CAMRA's "Boot Inn" is Google's "The Boot (Home to Boot Cantina)" and the
@@ -92,7 +93,8 @@ type Usage = (u: { inputTokens: number; outputTokens: number; webSearches: numbe
 // ── Cache (memory, then the shared plan_cache table) ─────────────────────
 
 const memory = new Map<string, { expires: number; data: Knowledge }>();
-const keyFor = (p: Place) => `lk6|${p.lat.toFixed(2)},${p.lng.toFixed(2)}|${Math.round(p.radiusKm)}`;
+// Includes whether Instagram is on, so switching it on refreshes areas.
+const keyFor = (p: Place) => `lk6|${p.lat.toFixed(2)},${p.lng.toFixed(2)}|${Math.round(p.radiusKm)}${INSTAGRAM_ON ? "|ig" : ""}`;
 
 async function readCache(key: string): Promise<Knowledge | null> {
   const hit = memory.get(key);
@@ -464,11 +466,23 @@ export function startLocalKnowledge(p: Place, anthropicKey: string, onUsage: Usa
   });
   const full = cached.then(async (hit) => {
     if (hit) return hit;
-    const [base, ...scouts] = await Promise.all([
+    const [base, instagram, ...scouts] = await Promise.all([
       fast,
+      instagramFindings(p.location, anthropicKey, (usd) => onUsage({ inputTokens: 0, outputTokens: 0, webSearches: 0, usd })).catch(
+        (err) => (console.warn("[local] instagram failed", err), [])
+      ),
       ...scoutSpecs(p).map((spec) => scout(p, anthropicKey, spec, onUsage).catch((err) => (console.warn(`[local] scout (${spec.name}) failed`, err), null))),
     ]);
-    const knowledge = { ...base, guides: scouts.flatMap((f) => f ?? []) };
+    const fromInstagram: GuideFinding[] = instagram.map((m) => ({
+      name: m.name,
+      category: m.category,
+      source: `@${m.creator} on Instagram`,
+      label: `@${m.creator} on Instagram`,
+      url: m.url,
+      note: m.note,
+      tone: m.tone,
+    }));
+    const knowledge = { ...base, guides: [...scouts.flatMap((f) => f ?? []), ...fromInstagram] };
     console.info(`[local] ${p.location}: ${knowledge.hygiene.length} hygiene, ${knowledge.wiki.length} wikipedia, ${knowledge.osm.length} osm, ${knowledge.guides.length} guide findings`);
     // Kept for a week only when the scout worked and found something — a
     // failed or empty scout is retried next time rather than cached.
