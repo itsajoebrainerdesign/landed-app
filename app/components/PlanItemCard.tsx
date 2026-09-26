@@ -4,9 +4,8 @@ import { mapsUrl } from "../lib/urls";
 import { telHref } from "../lib/format";
 import type { CategoryOption } from "../lib/categoryOptions";
 
-// A single venue card in "Your Plan" — the ✕ (remove) button only renders
-// when onRemove is passed; `corner` fills the bottom-right (the carousel's
-// position dots).
+// A single venue card in "Your Plan". With onRemove, a centred "Remove"
+// bar runs along the bottom; `corner` fills the price bar's right-hand side.
 export function PlanItemCard({
   item,
   corner,
@@ -24,15 +23,6 @@ export function PlanItemCard({
     // Fills its height: in a carousel, every option is as tall as the
     // tallest, with the price bar kept at the bottom.
     <div style={{ borderRadius: 20, overflow: "hidden", width: "100%", height: "100%", position: "relative", display: "flex", flexDirection: "column" }}>
-      {onRemove && (
-        <button
-          onClick={onRemove}
-          aria-label="Remove from plan"
-          style={{ position: "absolute", top: 10, right: 10, width: 28, height: 28, background: "none", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 5 }}
-        >
-          <span style={{ fontSize: 15, fontWeight: 700, color: "#111111", lineHeight: 1 }}>✕</span>
-        </button>
-      )}
       <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10, background: "#F7F5EE", flex: "1 1 auto" }}>
         <span style={{ alignSelf: "flex-start", borderRadius: 999, padding: "6px 14px", fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", background: item.tagBg, color: "#111111" }}>
           {item.tag}
@@ -97,6 +87,15 @@ export function PlanItemCard({
         </div>
         {corner}
       </div>
+      {onRemove && (
+        <button
+          onClick={onRemove}
+          aria-label={`Remove ${item.tag.toLowerCase()} from plan`}
+          style={{ height: 40, border: "none", borderTop: "1px solid #E2DED2", background: "#F2F0E9", color: "#767766", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", width: "100%" }}
+        >
+          Remove
+        </button>
+      )}
     </div>
   );
 }

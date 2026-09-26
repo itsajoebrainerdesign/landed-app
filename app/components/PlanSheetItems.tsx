@@ -54,38 +54,41 @@ export function PlanSheetItems({
         // ticket search / directions.
         const link = partnerLink(cat, item, { time, vibe }) ?? planItemLink(cat, item, area);
         return (
-          <div key={cat} style={{ borderRadius: 20, background: "#F7F5EE", padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
-            <span style={{ alignSelf: "flex-start", borderRadius: 999, padding: "6px 14px", fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", background: item.tagBg, color: "#111111" }}>
-              {item.tag}
-            </span>
-            <span style={{ fontWeight: 600, fontSize: 18, color: "#111111" }}>{item.title}</span>
-            {item.phone && (
-              <a href={telHref(item.phone)} style={{ alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 6, textDecoration: "none" }}>
-                <PhoneIcon />
-                <span style={{ fontSize: 12, color: "#767766" }}>{item.phone}</span>
-              </a>
-            )}
-            <SaveInMapsLink venue={item} area={area} />
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          // The card's action runs the full width of its bottom edge.
+          // flexShrink 0: in the sheet's scrolling column, a card with
+          // overflow hidden would otherwise be squashed to fit.
+          <div key={cat} style={{ borderRadius: 20, background: "#F7F5EE", overflow: "hidden", display: "flex", flexDirection: "column", flexShrink: 0 }}>
+            <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+              <span style={{ alignSelf: "flex-start", borderRadius: 999, padding: "6px 14px", fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", background: item.tagBg, color: "#111111" }}>
+                {item.tag}
+              </span>
+              <span style={{ fontWeight: 600, fontSize: 18, color: "#111111" }}>{item.title}</span>
+              {item.phone && (
+                <a href={telHref(item.phone)} style={{ alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 6, textDecoration: "none" }}>
+                  <PhoneIcon />
+                  <span style={{ fontSize: 12, color: "#767766" }}>{item.phone}</span>
+                </a>
+              )}
+              <SaveInMapsLink venue={item} area={area} />
               <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
                 <span style={{ fontWeight: 600, fontSize: 16, color: "#111111" }}>{item.price}</span>
                 <span style={{ fontSize: 12, color: "#3E3E3A" }}>{item.unit}</span>
               </div>
-              {item.hasApiBooking ? (
-                <span style={{ display: "flex", alignItems: "center", gap: 6, borderRadius: 999, padding: "8px 14px", fontSize: 11, fontWeight: 700, background: "var(--accent)", color: "#111111" }}>
-                  ✓ Booked
-                </span>
-              ) : (
-                <a
-                  href={link.href}
-                  target="_blank"
-                  rel={link.sponsored ? "noopener noreferrer sponsored" : "noopener noreferrer"}
-                  style={{ borderRadius: 999, padding: "8px 14px", fontSize: 11, fontWeight: 700, background: CTA_GRADIENT, color: "#111111", textDecoration: "none" }}
-                >
-                  {link.label}
-                </a>
-              )}
             </div>
+            {item.hasApiBooking ? (
+              <span style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 52, fontSize: 15, fontWeight: 700, background: "var(--accent)", color: "#111111" }}>
+                ✓ Booked
+              </span>
+            ) : (
+              <a
+                href={link.href}
+                target="_blank"
+                rel={link.sponsored ? "noopener noreferrer sponsored" : "noopener noreferrer"}
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 52, fontSize: 15, fontWeight: 700, letterSpacing: "0.01em", background: CTA_GRADIENT, color: "#111111", textDecoration: "none" }}
+              >
+                {link.label}
+              </a>
+            )}
           </div>
         );
       })}

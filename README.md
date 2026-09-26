@@ -191,7 +191,7 @@ redeploy. Without it, results are cached per server instance only.
 - `app/bookings/page.tsx`, `app/account/page.tsx` — Bookings and Account
 - `app/api/plan/route.ts` — live venue search
 - `app/auth/callback/route.ts` — where Supabase email links land
-- `app/components/` — `LiveMap`, `CategoryCarousel`, `PlanItemCard`, `QuickDropdown`, icons
+- `app/components/` — `LiveMap`, `CategoryCarousel`, `PlanItemCard`, `SegmentedToggle`, icons
 - `app/lib/` — `bookingsStore` / `accountStore` (data, Supabase or this
   device), `categoryOptions` (venue shape + pick logic), `geo`
   (locations), `urls` (outbound links), `supabase/` (clients)

@@ -41,7 +41,7 @@ function resultsFromSavedItems(items: Record<string, SavedItem>): LiveResults {
 import { CATEGORY_ORDER, CATEGORY_LABELS, computePicks, mergeCatalog, optionsForBudget, pickForBudget, emptyCatalog, withCategoryStyle } from "./lib/categoryOptions";
 import { PlanSheetItems } from "./components/PlanSheetItems";
 import { useSheetLock, SHEET_SCROLL_STYLE } from "./lib/useSheetLock";
-import { QuickDropdown } from "./components/QuickDropdown";
+import { SegmentedToggle } from "./components/SegmentedToggle";
 import { CategoryCarousel } from "./components/CategoryCarousel";
 import { SectionHeading } from "./components/SectionHeading";
 import { LiveMap, type PendingPin } from "./components/LiveMap";
@@ -109,7 +109,6 @@ export default function Home() {
   );
   const [removedCategories, setRemovedCategories] = useState<CategoryKey[]>([]);
   const [showAddMenu, setShowAddMenu] = useState(false);
-  const [openMenu, setOpenMenu] = useState<"when" | "vibe" | "budget" | null>(null);
 
   // Where the plan is — the device location or a place searched on the map.
   // Every venue comes from a live search there; there are no built-in ones.
@@ -538,6 +537,8 @@ export default function Home() {
   // found any) — or one may still be on its way.
   const hasStay = visibleCategories.includes("stay") || (!removedCategories.includes("stay") && liveLoading);
   const planSummary = `Here's ${VIBE_PHRASES[vibe]} in ${location.name} ${TIME_PHRASES[time]}${hasStay ? " with a stay to round it off" : ""}.`;
+  // The page's own heading: an invitation to build it with the settings below.
+  const planHeading = `Build ${VIBE_PHRASES[vibe]} in ${location.name} ${TIME_PHRASES[time]} below.`;
 
   // If arriving via a "?load=<id>" link (from the Bookings page), pull that
   // saved booking/draft back into the editor instead of starting blank —
@@ -864,45 +865,17 @@ export default function Home() {
             precise card alignment for better-proportioned spacing in each
             section. If exact alignment matters again, make both minHeight
             values equal (they were 250/250, and separately 200/200,
-            before this). */}
-        <span className="font-semibold text-[40px] leading-tight text-ink" style={{ marginBottom: 16, minHeight: 300, display: "block" }}>
-          {planSummary}
+            before this). The heading became the shorter "Build your … below."
+            text, so its reservation dropped from 300 to 190. */}
+        <span className="font-semibold text-[40px] leading-tight text-ink" style={{ marginBottom: 20, minHeight: 190, display: "block" }}>
+          {planHeading}
         </span>
 
-        <div style={{ display: "flex", gap: 10, marginBottom: 28 }}>
-          <QuickDropdown
-            label="When"
-            menu={WHEN_MENU}
-            value={time}
-            isOpen={openMenu === "when"}
-            onToggle={() => setOpenMenu(openMenu === "when" ? null : "when")}
-            onSelect={(key) => {
-              selectTime(key);
-              setOpenMenu(null);
-            }}
-          />
-          <QuickDropdown
-            label="Vibe"
-            menu={VIBE_MENU}
-            value={vibe}
-            isOpen={openMenu === "vibe"}
-            onToggle={() => setOpenMenu(openMenu === "vibe" ? null : "vibe")}
-            onSelect={(key) => {
-              selectVibe(key);
-              setOpenMenu(null);
-            }}
-          />
-          <QuickDropdown
-            label="Budget"
-            menu={BUDGET_MENU}
-            value={budget}
-            isOpen={openMenu === "budget"}
-            onToggle={() => setOpenMenu(openMenu === "budget" ? null : "budget")}
-            onSelect={(key) => {
-              selectBudget(key);
-              setOpenMenu(null);
-            }}
-          />
+        {/* The plan's settings, as slim switches (no menus to open). */}
+        <div className="flex flex-col gap-2" style={{ marginBottom: 20 }}>
+          <SegmentedToggle label="When" options={WHEN_MENU} value={time} onChange={selectTime} />
+          <SegmentedToggle label="Vibe" options={VIBE_MENU} value={vibe} onChange={selectVibe} />
+          <SegmentedToggle label="Budget" options={BUDGET_MENU} value={budget} onChange={selectBudget} />
         </div>
 
         {/* How far to look: closer for a walkable plan, wider to include
@@ -1033,7 +1006,7 @@ export default function Home() {
           style={{ background: bookingsConfirmed ? "#EAE7DF" : CTA_GRADIENT, marginTop: 24 }}
         >
           <span className="font-semibold text-[14px] text-ink">
-            {bookingsConfirmed ? "✓ Plan saved" : "Book your plan"}
+            {bookingsConfirmed ? "✓ Plan saved" : "Confirm plan"}
           </span>
           <span className="font-semibold text-[16px] leading-none text-ink">↘</span>
         </button>
